@@ -1190,6 +1190,17 @@ def run_analysis():
             report_file = save_report_to_disk(final_state, selections["ticker"], save_path)
             console.print(f"\n[green]✓ Report saved to:[/green] {save_path.resolve()}")
             console.print(f"  [dim]Complete report:[/dim] {report_file.name}")
+
+            # Generate concise HTML summary with charts
+            from cli.summary_report import save_summary_report
+            summary_file = save_summary_report(final_state, selections["ticker"], save_path)
+            console.print(f"  [dim]Summary report:[/dim]  {summary_file.name}")
+
+            # Auto-open summary in browser
+            import webbrowser
+            open_choice = typer.prompt("\nOpen summary in browser?", default="Y").strip().upper()
+            if open_choice in ("Y", "YES", ""):
+                webbrowser.open(summary_file.as_uri())
         except Exception as e:
             console.print(f"[red]Error saving report: {e}[/red]")
 
