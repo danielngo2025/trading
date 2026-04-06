@@ -77,6 +77,16 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("Qwen3:latest (8B, local)", "qwen3:latest"),
         ],
     },
+    "claude-cli": {
+        "quick": [
+            ("Claude Sonnet 4.6 - Fast, via local CLI", "claude-sonnet-4-6"),
+            ("Claude Haiku 4.5 - Fastest, via local CLI", "claude-haiku-4-5"),
+        ],
+        "deep": [
+            ("Claude Sonnet 4.6 - Balanced, via local CLI", "claude-sonnet-4-6"),
+            ("Claude Opus 4.6 - Most capable, via local CLI", "claude-opus-4-6"),
+        ],
+    },
 }
 
 

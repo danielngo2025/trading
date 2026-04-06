@@ -4,6 +4,7 @@ from .base_client import BaseLLMClient
 from .openai_client import OpenAIClient
 from .anthropic_client import AnthropicClient
 from .google_client import GoogleClient
+from .claude_cli_client import ClaudeCLIClient
 
 
 def create_llm_client(
@@ -33,6 +34,9 @@ def create_llm_client(
         ValueError: If provider is not supported
     """
     provider_lower = provider.lower()
+
+    if provider_lower == "claude-cli":
+        return ClaudeCLIClient(model, base_url, **kwargs)
 
     if provider_lower in ("openai", "ollama", "openrouter"):
         return OpenAIClient(model, base_url, provider=provider_lower, **kwargs)
