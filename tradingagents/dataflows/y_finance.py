@@ -4,7 +4,7 @@ from dateutil.relativedelta import relativedelta
 import pandas as pd
 import yfinance as yf
 import os
-from .stockstats_utils import StockstatsUtils, _clean_dataframe, yf_retry, load_ohlcv, filter_financials_by_date
+from .stockstats_utils import StockstatsUtils, _clean_dataframe, yf_retry, load_ohlcv, filter_financials_by_date, cached_fetch
 
 def get_YFin_data_online(
     symbol: Annotated[str, "ticker symbol of the company"],
@@ -185,6 +185,9 @@ def get_stock_stats_indicators_window(
     return result_str
 
 
+_indicator_cache: dict[str, dict] = {}
+
+
 def _get_stock_stats_bulk(
     symbol: Annotated[str, "ticker symbol of the company"],
     indicator: Annotated[str, "technical indicator to calculate"],
@@ -194,28 +197,34 @@ def _get_stock_stats_bulk(
     Optimized bulk calculation of stock stats indicators.
     Fetches data once and calculates indicator for all available dates.
     Returns dict mapping date strings to indicator values.
+    Results are cached in-memory so repeated calls for the same
+    symbol+indicator+date return instantly.
     """
+    cache_key = f"{symbol}-{indicator}-{curr_date}"
+    if cache_key in _indicator_cache:
+        return _indicator_cache[cache_key]
+
     from stockstats import wrap
 
     data = load_ohlcv(symbol, curr_date)
     df = wrap(data)
     df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")
-    
+
     # Calculate the indicator for all rows at once
     df[indicator]  # This triggers stockstats to calculate the indicator
-    
+
     # Create a dictionary mapping date strings to indicator values
     result_dict = {}
     for _, row in df.iterrows():
         date_str = row["Date"]
         indicator_value = row[indicator]
-        
-        # Handle NaN/None values
+
         if pd.isna(indicator_value):
             result_dict[date_str] = "N/A"
         else:
             result_dict[date_str] = str(indicator_value)
-    
+
+    _indicator_cache[cache_key] = result_dict
     return result_dict
 
 
@@ -249,57 +258,98 @@ def get_fundamentals(
     ticker: Annotated[str, "ticker symbol of the company"],
     curr_date: Annotated[str, "current date (not used for yfinance)"] = None
 ):
-    """Get company fundamentals overview from yfinance."""
-    try:
-        ticker_obj = yf.Ticker(ticker.upper())
-        info = yf_retry(lambda: ticker_obj.info)
+    """Get company fundamentals overview from yfinance (cached per ticker+date)."""
+    date_key = curr_date or datetime.now().strftime("%Y-%m-%d")
+    cache_key = f"{ticker.upper()}-fundamentals-{date_key}"
 
-        if not info:
-            return f"No fundamentals data found for symbol '{ticker}'"
+    def _fetch():
+        try:
+            ticker_obj = yf.Ticker(ticker.upper())
+            info = yf_retry(lambda: ticker_obj.info)
 
-        fields = [
-            ("Name", info.get("longName")),
-            ("Sector", info.get("sector")),
-            ("Industry", info.get("industry")),
-            ("Market Cap", info.get("marketCap")),
-            ("PE Ratio (TTM)", info.get("trailingPE")),
-            ("Forward PE", info.get("forwardPE")),
-            ("PEG Ratio", info.get("pegRatio")),
-            ("Price to Book", info.get("priceToBook")),
-            ("EPS (TTM)", info.get("trailingEps")),
-            ("Forward EPS", info.get("forwardEps")),
-            ("Dividend Yield", info.get("dividendYield")),
-            ("Beta", info.get("beta")),
-            ("52 Week High", info.get("fiftyTwoWeekHigh")),
-            ("52 Week Low", info.get("fiftyTwoWeekLow")),
-            ("50 Day Average", info.get("fiftyDayAverage")),
-            ("200 Day Average", info.get("twoHundredDayAverage")),
-            ("Revenue (TTM)", info.get("totalRevenue")),
-            ("Gross Profit", info.get("grossProfits")),
-            ("EBITDA", info.get("ebitda")),
-            ("Net Income", info.get("netIncomeToCommon")),
-            ("Profit Margin", info.get("profitMargins")),
-            ("Operating Margin", info.get("operatingMargins")),
-            ("Return on Equity", info.get("returnOnEquity")),
-            ("Return on Assets", info.get("returnOnAssets")),
-            ("Debt to Equity", info.get("debtToEquity")),
-            ("Current Ratio", info.get("currentRatio")),
-            ("Book Value", info.get("bookValue")),
-            ("Free Cash Flow", info.get("freeCashflow")),
-        ]
+            if not info:
+                return f"No fundamentals data found for symbol '{ticker}'"
 
-        lines = []
-        for label, value in fields:
-            if value is not None:
-                lines.append(f"{label}: {value}")
+            fields = [
+                ("Name", info.get("longName")),
+                ("Sector", info.get("sector")),
+                ("Industry", info.get("industry")),
+                ("Market Cap", info.get("marketCap")),
+                ("PE Ratio (TTM)", info.get("trailingPE")),
+                ("Forward PE", info.get("forwardPE")),
+                ("PEG Ratio", info.get("pegRatio")),
+                ("Price to Book", info.get("priceToBook")),
+                ("EPS (TTM)", info.get("trailingEps")),
+                ("Forward EPS", info.get("forwardEps")),
+                ("Dividend Yield", info.get("dividendYield")),
+                ("Beta", info.get("beta")),
+                ("52 Week High", info.get("fiftyTwoWeekHigh")),
+                ("52 Week Low", info.get("fiftyTwoWeekLow")),
+                ("50 Day Average", info.get("fiftyDayAverage")),
+                ("200 Day Average", info.get("twoHundredDayAverage")),
+                ("Revenue (TTM)", info.get("totalRevenue")),
+                ("Gross Profit", info.get("grossProfits")),
+                ("EBITDA", info.get("ebitda")),
+                ("Net Income", info.get("netIncomeToCommon")),
+                ("Profit Margin", info.get("profitMargins")),
+                ("Operating Margin", info.get("operatingMargins")),
+                ("Return on Equity", info.get("returnOnEquity")),
+                ("Return on Assets", info.get("returnOnAssets")),
+                ("Debt to Equity", info.get("debtToEquity")),
+                ("Current Ratio", info.get("currentRatio")),
+                ("Book Value", info.get("bookValue")),
+                ("Free Cash Flow", info.get("freeCashflow")),
+            ]
 
-        header = f"# Company Fundamentals for {ticker.upper()}\n"
-        header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            lines = []
+            for label, value in fields:
+                if value is not None:
+                    lines.append(f"{label}: {value}")
 
-        return header + "\n".join(lines)
+            header = f"# Company Fundamentals for {ticker.upper()}\n"
+            header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
-    except Exception as e:
-        return f"Error retrieving fundamentals for {ticker}: {str(e)}"
+            return header + "\n".join(lines)
+
+        except Exception as e:
+            return f"Error retrieving fundamentals for {ticker}: {str(e)}"
+
+    return cached_fetch("fundamentals", cache_key, _fetch)
+
+
+def _get_financial_statement(ticker, freq, curr_date, statement_type):
+    """Fetch a financial statement with caching.
+
+    *statement_type* is one of 'balance_sheet', 'cashflow', 'income_stmt'.
+    """
+    date_key = curr_date or datetime.now().strftime("%Y-%m-%d")
+    cache_key = f"{ticker.upper()}-{statement_type}-{freq}-{date_key}"
+
+    label_map = {
+        "balance_sheet": "Balance Sheet",
+        "cashflow": "Cash Flow",
+        "income_stmt": "Income Statement",
+    }
+
+    def _fetch():
+        try:
+            ticker_obj = yf.Ticker(ticker.upper())
+            attr = f"quarterly_{statement_type}" if freq.lower() == "quarterly" else statement_type
+            data = yf_retry(lambda: getattr(ticker_obj, attr))
+            data = filter_financials_by_date(data, curr_date)
+
+            if data.empty:
+                return f"No {label_map[statement_type].lower()} data found for symbol '{ticker}'"
+
+            csv_string = data.to_csv()
+            header = f"# {label_map[statement_type]} data for {ticker.upper()} ({freq})\n"
+            header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            return header + csv_string
+
+        except Exception as e:
+            return f"Error retrieving {label_map[statement_type].lower()} for {ticker}: {str(e)}"
+
+    return cached_fetch("financials", cache_key, _fetch)
 
 
 def get_balance_sheet(
@@ -307,31 +357,8 @@ def get_balance_sheet(
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
     curr_date: Annotated[str, "current date in YYYY-MM-DD format"] = None
 ):
-    """Get balance sheet data from yfinance."""
-    try:
-        ticker_obj = yf.Ticker(ticker.upper())
-
-        if freq.lower() == "quarterly":
-            data = yf_retry(lambda: ticker_obj.quarterly_balance_sheet)
-        else:
-            data = yf_retry(lambda: ticker_obj.balance_sheet)
-
-        data = filter_financials_by_date(data, curr_date)
-
-        if data.empty:
-            return f"No balance sheet data found for symbol '{ticker}'"
-            
-        # Convert to CSV string for consistency with other functions
-        csv_string = data.to_csv()
-        
-        # Add header information
-        header = f"# Balance Sheet data for {ticker.upper()} ({freq})\n"
-        header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        
-        return header + csv_string
-        
-    except Exception as e:
-        return f"Error retrieving balance sheet for {ticker}: {str(e)}"
+    """Get balance sheet data from yfinance (cached)."""
+    return _get_financial_statement(ticker, freq, curr_date, "balance_sheet")
 
 
 def get_cashflow(
@@ -339,31 +366,8 @@ def get_cashflow(
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
     curr_date: Annotated[str, "current date in YYYY-MM-DD format"] = None
 ):
-    """Get cash flow data from yfinance."""
-    try:
-        ticker_obj = yf.Ticker(ticker.upper())
-
-        if freq.lower() == "quarterly":
-            data = yf_retry(lambda: ticker_obj.quarterly_cashflow)
-        else:
-            data = yf_retry(lambda: ticker_obj.cashflow)
-
-        data = filter_financials_by_date(data, curr_date)
-
-        if data.empty:
-            return f"No cash flow data found for symbol '{ticker}'"
-            
-        # Convert to CSV string for consistency with other functions
-        csv_string = data.to_csv()
-        
-        # Add header information
-        header = f"# Cash Flow data for {ticker.upper()} ({freq})\n"
-        header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        
-        return header + csv_string
-        
-    except Exception as e:
-        return f"Error retrieving cash flow for {ticker}: {str(e)}"
+    """Get cash flow data from yfinance (cached)."""
+    return _get_financial_statement(ticker, freq, curr_date, "cashflow")
 
 
 def get_income_statement(
@@ -371,52 +375,31 @@ def get_income_statement(
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
     curr_date: Annotated[str, "current date in YYYY-MM-DD format"] = None
 ):
-    """Get income statement data from yfinance."""
-    try:
-        ticker_obj = yf.Ticker(ticker.upper())
-
-        if freq.lower() == "quarterly":
-            data = yf_retry(lambda: ticker_obj.quarterly_income_stmt)
-        else:
-            data = yf_retry(lambda: ticker_obj.income_stmt)
-
-        data = filter_financials_by_date(data, curr_date)
-
-        if data.empty:
-            return f"No income statement data found for symbol '{ticker}'"
-            
-        # Convert to CSV string for consistency with other functions
-        csv_string = data.to_csv()
-        
-        # Add header information
-        header = f"# Income Statement data for {ticker.upper()} ({freq})\n"
-        header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        
-        return header + csv_string
-        
-    except Exception as e:
-        return f"Error retrieving income statement for {ticker}: {str(e)}"
+    """Get income statement data from yfinance (cached)."""
+    return _get_financial_statement(ticker, freq, curr_date, "income_stmt")
 
 
 def get_insider_transactions(
     ticker: Annotated[str, "ticker symbol of the company"]
 ):
-    """Get insider transactions data from yfinance."""
-    try:
-        ticker_obj = yf.Ticker(ticker.upper())
-        data = yf_retry(lambda: ticker_obj.insider_transactions)
-        
-        if data is None or data.empty:
-            return f"No insider transactions data found for symbol '{ticker}'"
-            
-        # Convert to CSV string for consistency with other functions
-        csv_string = data.to_csv()
-        
-        # Add header information
-        header = f"# Insider Transactions data for {ticker.upper()}\n"
-        header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        
-        return header + csv_string
-        
-    except Exception as e:
-        return f"Error retrieving insider transactions for {ticker}: {str(e)}"
+    """Get insider transactions data from yfinance (cached per ticker+date)."""
+    date_key = datetime.now().strftime("%Y-%m-%d")
+    cache_key = f"{ticker.upper()}-insider-{date_key}"
+
+    def _fetch():
+        try:
+            ticker_obj = yf.Ticker(ticker.upper())
+            data = yf_retry(lambda: ticker_obj.insider_transactions)
+
+            if data is None or data.empty:
+                return f"No insider transactions data found for symbol '{ticker}'"
+
+            csv_string = data.to_csv()
+            header = f"# Insider Transactions data for {ticker.upper()}\n"
+            header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            return header + csv_string
+
+        except Exception as e:
+            return f"Error retrieving insider transactions for {ticker}: {str(e)}"
+
+    return cached_fetch("fundamentals", cache_key, _fetch)

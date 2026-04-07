@@ -1,11 +1,51 @@
 # TradingAgents/graph/propagation.py
 
+import logging
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from tradingagents.agents.utils.agent_states import (
     AgentState,
     InvestDebateState,
     RiskDebateState,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _last_trading_day(date_str: str) -> str:
+    """Roll back to the most recent trading day.
+
+    Skips weekends and market holidays by checking for actual OHLCV
+    data. Tries up to 10 days back to handle long holiday weekends.
+    """
+    try:
+        from tradingagents.dataflows.stockstats_utils import load_ohlcv
+        import pandas as pd
+
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+
+        # Use SPY as a reference — it trades every market day
+        spy_data = load_ohlcv("SPY", date_str)
+
+        for _ in range(10):
+            check = dt.strftime("%Y-%m-%d")
+            check_ts = pd.to_datetime(check)
+            if not spy_data[spy_data["Date"] == check_ts].empty:
+                if check != date_str:
+                    logger.info(f"Adjusted analysis date from {date_str} to {check} (last trading day)")
+                return check
+            dt -= timedelta(days=1)
+
+        # Fallback: just skip weekends
+        logger.warning(f"Could not find trading day near {date_str}, falling back to weekend skip")
+    except Exception as e:
+        logger.warning(f"Could not verify trading day for {date_str}: {e}")
+
+    # Simple weekend fallback
+    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    while dt.weekday() >= 5:
+        dt -= timedelta(days=1)
+    return dt.strftime("%Y-%m-%d")
 
 
 class Propagator:
@@ -19,10 +59,11 @@ class Propagator:
         self, company_name: str, trade_date: str
     ) -> Dict[str, Any]:
         """Create the initial state for the agent graph."""
+        trade_date = _last_trading_day(str(trade_date))
         return {
             "messages": [("human", company_name)],
             "company_of_interest": company_name,
-            "trade_date": str(trade_date),
+            "trade_date": trade_date,
             "investment_debate_state": InvestDebateState(
                 {
                     "bull_history": "",

@@ -4,7 +4,7 @@ import yfinance as yf
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-from .stockstats_utils import yf_retry
+from .stockstats_utils import yf_retry, cached_fetch
 
 
 def _extract_article_data(article: dict) -> dict:
@@ -54,54 +54,49 @@ def get_news_yfinance(
     end_date: str,
 ) -> str:
     """
-    Retrieve news for a specific stock ticker using yfinance.
-
-    Args:
-        ticker: Stock ticker symbol (e.g., "AAPL")
-        start_date: Start date in yyyy-mm-dd format
-        end_date: End date in yyyy-mm-dd format
-
-    Returns:
-        Formatted string containing news articles
+    Retrieve news for a specific stock ticker using yfinance (cached per ticker+date range).
     """
-    try:
-        stock = yf.Ticker(ticker)
-        news = yf_retry(lambda: stock.get_news(count=20))
+    cache_key = f"{ticker.upper()}-news-{start_date}-{end_date}"
 
-        if not news:
-            return f"No news found for {ticker}"
+    def _fetch():
+        try:
+            stock = yf.Ticker(ticker)
+            news = yf_retry(lambda: stock.get_news(count=20))
 
-        # Parse date range for filtering
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            if not news:
+                return f"No news found for {ticker}"
 
-        news_str = ""
-        filtered_count = 0
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
-        for article in news:
-            data = _extract_article_data(article)
+            news_str = ""
+            filtered_count = 0
 
-            # Filter by date if publish time is available
-            if data["pub_date"]:
-                pub_date_naive = data["pub_date"].replace(tzinfo=None)
-                if not (start_dt <= pub_date_naive <= end_dt + relativedelta(days=1)):
-                    continue
+            for article in news:
+                data = _extract_article_data(article)
 
-            news_str += f"### {data['title']} (source: {data['publisher']})\n"
-            if data["summary"]:
-                news_str += f"{data['summary']}\n"
-            if data["link"]:
-                news_str += f"Link: {data['link']}\n"
-            news_str += "\n"
-            filtered_count += 1
+                if data["pub_date"]:
+                    pub_date_naive = data["pub_date"].replace(tzinfo=None)
+                    if not (start_dt <= pub_date_naive <= end_dt + relativedelta(days=1)):
+                        continue
 
-        if filtered_count == 0:
-            return f"No news found for {ticker} between {start_date} and {end_date}"
+                news_str += f"### {data['title']} (source: {data['publisher']})\n"
+                if data["summary"]:
+                    news_str += f"{data['summary']}\n"
+                if data["link"]:
+                    news_str += f"Link: {data['link']}\n"
+                news_str += "\n"
+                filtered_count += 1
 
-        return f"## {ticker} News, from {start_date} to {end_date}:\n\n{news_str}"
+            if filtered_count == 0:
+                return f"No news found for {ticker} between {start_date} and {end_date}"
 
-    except Exception as e:
-        return f"Error fetching news for {ticker}: {str(e)}"
+            return f"## {ticker} News, from {start_date} to {end_date}:\n\n{news_str}"
+
+        except Exception as e:
+            return f"Error fetching news for {ticker}: {str(e)}"
+
+    return cached_fetch("news", cache_key, _fetch)
 
 
 def get_global_news_yfinance(
@@ -109,89 +104,78 @@ def get_global_news_yfinance(
     look_back_days: int = 7,
     limit: int = 10,
 ) -> str:
-    """
-    Retrieve global/macro economic news using yfinance Search.
+    """Retrieve global/macro economic news using yfinance Search (cached per date+params)."""
+    cache_key = f"global-news-{curr_date}-{look_back_days}-{limit}"
 
-    Args:
-        curr_date: Current date in yyyy-mm-dd format
-        look_back_days: Number of days to look back
-        limit: Maximum number of articles to return
+    def _fetch():
+        search_queries = [
+            "stock market economy",
+            "Federal Reserve interest rates",
+            "inflation economic outlook",
+            "global markets trading",
+        ]
 
-    Returns:
-        Formatted string containing global news articles
-    """
-    # Search queries for macro/global news
-    search_queries = [
-        "stock market economy",
-        "Federal Reserve interest rates",
-        "inflation economic outlook",
-        "global markets trading",
-    ]
+        all_news = []
+        seen_titles = set()
 
-    all_news = []
-    seen_titles = set()
+        try:
+            for query in search_queries:
+                search = yf_retry(lambda q=query: yf.Search(
+                    query=q,
+                    news_count=limit,
+                    enable_fuzzy_query=True,
+                ))
 
-    try:
-        for query in search_queries:
-            search = yf_retry(lambda q=query: yf.Search(
-                query=q,
-                news_count=limit,
-                enable_fuzzy_query=True,
-            ))
+                if search.news:
+                    for article in search.news:
+                        if "content" in article:
+                            data = _extract_article_data(article)
+                            title = data["title"]
+                        else:
+                            title = article.get("title", "")
 
-            if search.news:
-                for article in search.news:
-                    # Handle both flat and nested structures
-                    if "content" in article:
-                        data = _extract_article_data(article)
-                        title = data["title"]
-                    else:
-                        title = article.get("title", "")
+                        if title and title not in seen_titles:
+                            seen_titles.add(title)
+                            all_news.append(article)
 
-                    # Deduplicate by title
-                    if title and title not in seen_titles:
-                        seen_titles.add(title)
-                        all_news.append(article)
+                if len(all_news) >= limit:
+                    break
 
-            if len(all_news) >= limit:
-                break
+            if not all_news:
+                return f"No global news found for {curr_date}"
 
-        if not all_news:
-            return f"No global news found for {curr_date}"
+            curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+            start_dt = curr_dt - relativedelta(days=look_back_days)
+            start_date = start_dt.strftime("%Y-%m-%d")
 
-        # Calculate date range
-        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
-        start_dt = curr_dt - relativedelta(days=look_back_days)
-        start_date = start_dt.strftime("%Y-%m-%d")
+            news_str = ""
+            for article in all_news[:limit]:
+                if "content" in article:
+                    data = _extract_article_data(article)
+                    if data.get("pub_date"):
+                        pub_naive = data["pub_date"].replace(tzinfo=None) if hasattr(data["pub_date"], "replace") else data["pub_date"]
+                        if pub_naive > curr_dt + relativedelta(days=1):
+                            continue
+                    title = data["title"]
+                    publisher = data["publisher"]
+                    link = data["link"]
+                    summary = data["summary"]
+                else:
+                    title = article.get("title", "No title")
+                    publisher = article.get("publisher", "Unknown")
+                    link = article.get("link", "")
+                    summary = ""
 
-        news_str = ""
-        for article in all_news[:limit]:
-            # Handle both flat and nested structures
-            if "content" in article:
-                data = _extract_article_data(article)
-                # Skip articles published after curr_date (look-ahead guard)
-                if data.get("pub_date"):
-                    pub_naive = data["pub_date"].replace(tzinfo=None) if hasattr(data["pub_date"], "replace") else data["pub_date"]
-                    if pub_naive > curr_dt + relativedelta(days=1):
-                        continue
-                title = data["title"]
-                publisher = data["publisher"]
-                link = data["link"]
-                summary = data["summary"]
-            else:
-                title = article.get("title", "No title")
-                publisher = article.get("publisher", "Unknown")
-                link = article.get("link", "")
-                summary = ""
+                news_str += f"### {title} (source: {publisher})\n"
+                if summary:
+                    news_str += f"{summary}\n"
+                if link:
+                    news_str += f"Link: {link}\n"
+                news_str += "\n"
 
-            news_str += f"### {title} (source: {publisher})\n"
-            if summary:
-                news_str += f"{summary}\n"
-            if link:
-                news_str += f"Link: {link}\n"
-            news_str += "\n"
+            return f"## Global Market News, from {start_date} to {curr_date}:\n\n{news_str}"
 
-        return f"## Global Market News, from {start_date} to {curr_date}:\n\n{news_str}"
+        except Exception as e:
+            return f"Error fetching global news: {str(e)}"
 
-    except Exception as e:
-        return f"Error fetching global news: {str(e)}"
+    return cached_fetch("news", cache_key, _fetch)

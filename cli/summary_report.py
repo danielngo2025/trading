@@ -2,20 +2,142 @@
 
 import datetime
 import json
+import logging
 import re
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
+
+def _fetch_live_price(ticker: str) -> dict:
+    """Fetch current price and key levels from yfinance as a fallback."""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).info
+        return {
+            "price": info.get("previousClose") or info.get("regularMarketPrice"),
+            "sma_50": info.get("fiftyDayAverage"),
+            "sma_200": info.get("twoHundredDayAverage"),
+            "high_52w": info.get("fiftyTwoWeekHigh"),
+            "low_52w": info.get("fiftyTwoWeekLow"),
+        }
+    except Exception as e:
+        logger.warning(f"Could not fetch live price for {ticker}: {e}")
+        return {}
+
+
+def _compute_indicators(ticker: str, days: int = 30) -> dict:
+    """Compute technical indicators directly from cached OHLCV data.
+
+    Returns dict with rsi_series, macd_series, macd_hist_series, atr_series,
+    summary_table, and scalar values for latest indicators.
+    """
+    try:
+        from stockstats import wrap as stockstats_wrap
+        from tradingagents.dataflows.stockstats_utils import load_ohlcv
+        import pandas as pd
+
+        data = load_ohlcv(ticker, datetime.datetime.now().strftime("%Y-%m-%d"))
+        if data.empty or len(data) < 30:
+            return {}
+
+        df = stockstats_wrap(data.copy())
+        # Trigger calculations
+        for ind in ("rsi_14", "macd", "macdh", "macds", "boll_ub", "boll_lb", "atr"):
+            try:
+                _ = df[ind]
+            except Exception:
+                pass
+
+        df["date_str"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
+        tail = df.tail(days).copy()
+
+        def _series(col):
+            s = tail[["date_str", col]].dropna()
+            return [{"date": r["date_str"], "value": round(float(r[col]), 2)} for _, r in s.iterrows()]
+
+        rsi_series = _series("rsi_14")
+        macd_series = _series("macd")
+        macd_hist_series = _series("macdh")
+        atr_series = _series("atr")
+
+        # Latest values for summary table
+        last = df.dropna(subset=["rsi_14"]).iloc[-1] if not df.dropna(subset=["rsi_14"]).empty else None
+        summary_table = []
+        if last is not None:
+            def _row(name, col, signal_fn, insight_fn):
+                val = last.get(col)
+                if pd.isna(val):
+                    return None
+                val = round(float(val), 2)
+                signal = signal_fn(val)
+                insight = insight_fn(val)
+                return {"indicator": name, "value": str(val), "signal": signal, "insight": insight}
+
+            close = float(last.get("Close", 0))
+
+            rows = [
+                _row("RSI (14)", "rsi_14",
+                     lambda v: "Oversold" if v < 30 else ("Overbought" if v > 70 else "Neutral"),
+                     lambda v: "Strong buying opportunity" if v < 25 else (
+                         "Approaching oversold; watch for reversal" if v < 35 else (
+                         "Take profits; momentum exhaustion likely" if v > 75 else (
+                         "Caution; nearing overbought territory" if v > 65 else "No extreme; trend continuation likely")))),
+                _row("MACD", "macd",
+                     lambda v: "Bullish" if v > 0 else "Bearish",
+                     lambda v: "Positive momentum; uptrend intact" if v > 0 else "Negative momentum; downtrend pressure"),
+                _row("MACD Histogram", "macdh",
+                     lambda v: "Bullish" if v > 0 else "Bearish",
+                     lambda v: "Momentum accelerating to the upside" if v > 0 else "Momentum accelerating to the downside"),
+                _row("Bollinger Upper", "boll_ub",
+                     lambda v: "Overbought" if close > v else "Below Upper",
+                     lambda v: f"Price breached upper band; pullback likely" if close > v else f"Room to run before resistance at {v:.0f}"),
+                _row("Bollinger Lower", "boll_lb",
+                     lambda v: "Oversold" if close < v else "Above Lower",
+                     lambda v: f"Price below lower band; bounce opportunity" if close < v else f"Holding above support at {v:.0f}"),
+                _row("ATR", "atr",
+                     lambda v: "High Volatility" if v > close * 0.03 else "Normal",
+                     lambda v: f"Wide swings ({v:.1f}/day); widen stops accordingly" if v > close * 0.03 else f"Stable range ({v:.1f}/day); tight stops viable"),
+            ]
+            summary_table = [r for r in rows if r is not None]
+
+        return {
+            "rsi_series": rsi_series,
+            "macd_series": macd_series,
+            "macd_hist_series": macd_hist_series,
+            "atr_series": atr_series,
+            "summary_table": summary_table,
+        }
+    except Exception as e:
+        logger.warning(f"Could not compute indicators for {ticker}: {e}")
+        return {}
+
 
 def _extract_price(text: str) -> float | None:
-    m = re.search(r"\*\*Close:?\*\*\s*\$([0-9,.]+)", text)
-    if not m:
-        m = re.search(r"Close:?\s*\$([0-9,.]+)", text)
-    return float(m.group(1).replace(",", "")) if m else None
+    for pattern in [
+        r"\*\*Close:?\*\*\s*\$([0-9,.]+)",
+        r"Close:?\s*\$([0-9,.]+)",
+        r"50 Day Average:?\s*([0-9,.]+)",
+        r"Current Price[^$]*\$([0-9,.]+)",
+        r"current.*?price.*?\$([0-9,.]+)",
+        r"trading at \$([0-9,.]+)",
+        r"closed at \$([0-9,.]+)",
+    ]:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            return float(m.group(1).replace(",", ""))
+    return None
 
 
 def _extract_dollar(pattern: str, text: str) -> float | None:
-    m = re.search(pattern, text)
-    return float(m.group(1).replace(",", "")) if m else None
+    for m in re.finditer(pattern, text):
+        # Skip matches followed by M/B (millions/billions — revenue, not price)
+        end_pos = m.end()
+        suffix = text[end_pos:end_pos + 2].strip()
+        if suffix and suffix[0] in ("M", "B", "m", "b"):
+            continue
+        return float(m.group(1).replace(",", ""))
+    return None
 
 
 def _extract_table_series(header_pattern: str, text: str) -> list[dict]:
@@ -108,32 +230,66 @@ def _extract_executive_summary(text: str) -> str:
 
 
 def _extract_action_items(text: str) -> list[str]:
-    """Extract action items from portfolio manager decision."""
+    """Extract action items from portfolio manager decision and trader plan.
+
+    Handles both bullet-point and bold-paragraph formats commonly produced
+    by the Portfolio Manager agent.
+    """
     items = []
-    # Look for Entry/Exit, Hedging, Rotation sections
-    for pattern in [
-        r"\*\*(?:Entry/Exit Strategy|Action):?\*\*\s*\n((?:[-•]\s+.*\n?)+)",
-        r"\*\*Hedging:?\*\*\s*\n((?:[-•]\s+.*\n?)+)",
-        r"\*\*Rotation:?\*\*\s*\n((?:[-•]\s+.*\n?)+)",
-    ]:
-        m = re.search(pattern, text)
-        if m:
-            for line in m.group(1).strip().split("\n"):
-                line = line.strip().lstrip("-•").strip()
-                if line:
-                    items.append(line)
-    # Also try inline format
+
+    # 1. Extract bold-label paragraphs: **Action:** ..., **Entry/Exit Strategy:** ..., etc.
+    for m in re.finditer(
+        r"\*\*(?:Action|Entry/Exit Strategy|Position Sizing|Key Risk Level|Stop.Loss|Time Horizon|Recommendation|Hedging|Rotation):?\*\*:?\s*(.+?)(?=\n\n|\n\*\*|\Z)",
+        text, re.DOTALL
+    ):
+        line = m.group(1).strip().replace("\n", " ")
+        # Take up to two sentences or 300 chars
+        sentences = re.split(r"(?<=[.!])\s", line)
+        excerpt = sentences[0]
+        if len(sentences) > 1 and len(excerpt) < 100:
+            excerpt = " ".join(sentences[:2])
+        if len(excerpt) > 300:
+            excerpt = excerpt[:297] + "..."
+        if len(excerpt) > 15:
+            items.append(excerpt)
+
+    # 2. Extract bullet-pointed recommendations from sections
     if not items:
         for pattern in [
-            r"\*\*Action:?\*\*\s*(.+)",
-            r"Hard stop at\s*\*\*(\$[0-9,.]+)\*\*",
+            r"(?:###?\s*(?:Action Plan|Recommendations|Key Actions|Trading Plan))\s*\n((?:[-•]\s+.*\n?)+)",
+            r"\*\*(?:Entry/Exit Strategy|Action|Recommendation):?\*\*\s*\n((?:[-•]\s+.*\n?)+)",
         ]:
-            m = re.search(pattern, text)
-            if m:
-                items.append(m.group(1).strip())
-    # Strip markdown bold/italic markers
-    items = [re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", i) for i in items]
-    return items[:6]
+            for m in re.finditer(pattern, text):
+                for line in m.group(1).strip().split("\n"):
+                    line = line.strip().lstrip("-•*").strip()
+                    if line and len(line) > 15:
+                        items.append(line)
+
+    # 3. Extract numbered recommendations
+    if not items:
+        for m in re.finditer(r"^\s*\d+\.\s+(.{20,})", text, re.MULTILINE):
+            line = m.group(1).strip()
+            if not line.startswith("#") and not line.startswith("|"):
+                items.append(line)
+
+    # 4. Inline statements as last resort
+    if not items:
+        for pattern in [
+            r"(?:Existing holders|New buyers|Investors) should\s+[^.]+\.",
+            r"(?:stop.loss|hard stop)[^.]*\.",
+        ]:
+            for m in re.finditer(pattern, text, re.IGNORECASE):
+                items.append(m.group(0).strip())
+
+    # Deduplicate and clean markdown
+    seen = set()
+    clean = []
+    for item in items:
+        item = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", item)
+        if item not in seen:
+            seen.add(item)
+            clean.append(item)
+    return clean[:8]
 
 
 def _extract_bullets(text: str, max_count: int = 3) -> list[str]:
@@ -163,8 +319,11 @@ def extract_key_data(final_state: dict, ticker: str) -> dict:
     portfolio_decision = risk.get("judge_decision", "")
     trader_plan = final_state.get("trader_investment_plan", "")
 
-    # Summary table from market report (extract first - used for price levels)
-    summary_table = _extract_summary_table(market)
+    # Search all reports for data (resilient when any single report is empty)
+    all_reports = "\n\n".join(filter(None, [market, sentiment, news, fundamentals, trader_plan, portfolio_decision]))
+
+    # Summary table — try market first, then all reports
+    summary_table = _extract_summary_table(market) or _extract_summary_table(all_reports)
 
     # Build a lookup from summary table for reliable values
     st_lookup = {}
@@ -175,43 +334,85 @@ def extract_key_data(final_state: dict, ticker: str) -> dict:
         except (ValueError, IndexError):
             pass
 
-    # Price data - prefer summary table, fallback to regex
-    current_price = st_lookup.get("price (close)") or _extract_price(market)
-    sma_50 = st_lookup.get("50 sma") or _extract_dollar(r"\*\*50 SMA:?\*\*\s*\$([0-9,.]+)", market)
-    sma_200 = st_lookup.get("200 sma") or _extract_dollar(r"\*\*200 SMA:?\*\*\s*\$([0-9,.]+)", market)
-    support = _extract_dollar(r"(?:Recent Low|Lower Band|support)[^$]*\$([0-9,.]+)", market)
-    stop_loss = _extract_dollar(r"(?:stop|Stop)[^$]*\$([0-9,.]+)", portfolio_decision)
+    # Fetch live price as fallback for when reports don't contain price data
+    live = _fetch_live_price(ticker)
+
+    # Price data - search reports first, fall back to live yfinance data
+    current_price = st_lookup.get("price (close)") or _extract_price(market) or _extract_price(all_reports) or live.get("price")
+    sma_50 = st_lookup.get("50 sma") or _extract_dollar(r"\*\*50 SMA:?\*\*\s*\$([0-9,.]+)", all_reports) or live.get("sma_50")
+    sma_200 = st_lookup.get("200 sma") or _extract_dollar(r"\*\*200 SMA:?\*\*\s*\$([0-9,.]+)", all_reports) or live.get("sma_200")
+    # Support/stop: only match plausible per-share prices (under $10,000), avoid revenue figures
+    support_raw = _extract_dollar(r"(?:Recent Low|Lower Band|support)[^$]*\$([0-9,.]+)", all_reports)
+    support = support_raw if support_raw and support_raw < 10000 else live.get("low_52w")
+    stop_raw = _extract_dollar(r"(?:stop.loss|hard stop|stop below)[^$]*\$([0-9,.]+)", all_reports)
+    stop_loss = stop_raw if stop_raw and stop_raw < 10000 else None
 
     # Final decision
     decision = _extract_decision(portfolio_decision)
     if decision == "N/A":
         decision = _extract_decision(trader_plan)
+    if decision == "N/A":
+        decision = _extract_decision(all_reports)
 
-    # Time series
-    rsi_series = _extract_table_series(r"\|\s*Date\s*\|\s*RSI\s*\|", market)
-    macd_hist_series = _extract_table_series(r"\|\s*Date\s*\|\s*Histogram\s*\|", market)
-    atr_series = _extract_table_series(r"\|\s*Date\s*\|\s*ATR\s*\|", market)
-    macd_series = _extract_table_series(r"\|\s*Date\s*\|\s*MACD\s*\|", market)
+    # Time series — try report parsing first, fall back to computing from OHLCV
+    rsi_series = _extract_table_series(r"\|\s*Date\s*\|\s*RSI\s*\|", market) or _extract_table_series(r"\|\s*Date\s*\|\s*RSI\s*\|", all_reports)
+    macd_hist_series = _extract_table_series(r"\|\s*Date\s*\|\s*Histogram\s*\|", market) or _extract_table_series(r"\|\s*Date\s*\|\s*Histogram\s*\|", all_reports)
+    atr_series = _extract_table_series(r"\|\s*Date\s*\|\s*ATR\s*\|", market) or _extract_table_series(r"\|\s*Date\s*\|\s*ATR\s*\|", all_reports)
+    macd_series = _extract_table_series(r"\|\s*Date\s*\|\s*MACD\s*\|", market) or _extract_table_series(r"\|\s*Date\s*\|\s*MACD\s*\|", all_reports)
 
-    # Analyst summaries
+    # If report parsing found no indicator data, compute directly from OHLCV
+    if not rsi_series and not summary_table:
+        computed = _compute_indicators(ticker)
+        if computed:
+            rsi_series = rsi_series or computed.get("rsi_series", [])
+            macd_hist_series = macd_hist_series or computed.get("macd_hist_series", [])
+            macd_series = macd_series or computed.get("macd_series", [])
+            atr_series = atr_series or computed.get("atr_series", [])
+            summary_table = summary_table or computed.get("summary_table", [])
+
+    # Analyst summaries — fall back to other reports when one is empty
+    analyst_sources = {
+        "market": ("Market", market or trader_plan),
+        "sentiment": ("Sentiment", sentiment),
+        "news": ("News", news),
+        "fundamentals": ("Fundamentals", fundamentals),
+    }
     analyst_summaries = {}
-    for key, name, text in [
-        ("market", "Market", market),
-        ("sentiment", "Sentiment", sentiment),
-        ("news", "News", news),
-        ("fundamentals", "Fundamentals", fundamentals),
-    ]:
+    for key, (name, text) in analyst_sources.items():
         tx_m = re.search(r"FINAL TRANSACTION PROPOSAL:\s*\*?\*?(\w+)", text)
         tx = tx_m.group(1).upper() if tx_m else ""
         summary = _extract_executive_summary(text)
         analyst_summaries[key] = {"signal": tx, "summary": summary, "name": name}
 
-    # Bull/Bear bullets
+    # If market summary is empty, generate one from indicator data
+    if not analyst_summaries.get("market", {}).get("summary") and summary_table:
+        parts = [f"{r['indicator']}: {r['value']} ({r['signal']})" for r in summary_table[:4]]
+        price_str = f"${current_price:,.2f}" if current_price else "N/A"
+        analyst_summaries["market"]["summary"] = f"Price {price_str}. " + ". ".join(parts) + "."
+
+    # Bull/Bear bullets — try debate history first, fall back to investment plan / final decision
     bull_bullets = _extract_bullets(debate.get("bull_history", ""))
     bear_bullets = _extract_bullets(debate.get("bear_history", ""))
+    if not bull_bullets:
+        # Try extracting from sections labelled "Bull Case" or similar
+        bull_section = re.search(r"(?:###?\s*Bull Case|Bull Researcher)\s*\n([\s\S]*?)(?=\n###?\s|\Z)", all_reports)
+        if bull_section:
+            bull_bullets = _extract_bullets(bull_section.group(1))
+    if not bear_bullets:
+        bear_section = re.search(r"(?:###?\s*Bear Case|Bear Researcher)\s*\n([\s\S]*?)(?=\n###?\s|\Z)", all_reports)
+        if bear_section:
+            bear_bullets = _extract_bullets(bear_section.group(1))
 
-    # Action items
+    # Action items — search portfolio decision, trader plan, and investment plan
     action_items = _extract_action_items(portfolio_decision)
+    if len(action_items) < 3:
+        action_items += _extract_action_items(trader_plan)
+    if len(action_items) < 3:
+        action_items += _extract_action_items(final_state.get("investment_plan", ""))
+    # Deduplicate
+    seen = set()
+    action_items = [a for a in action_items if a not in seen and not seen.add(a)]
+    action_items = action_items[:8]
 
     return {
         "ticker": ticker,
@@ -346,6 +547,7 @@ def generate_summary_html(data: dict) -> str:
   .mono {{ font-family: 'SF Mono', Consolas, monospace; }}
   .insight {{ color: var(--muted); font-size: 0.8rem; }}
   .signal-badge {{ display: inline-block; padding: 2px 8px; border-radius: 4px; color: #fff; font-size: 0.75rem; font-weight: 600; }}
+  .analyst-grid {{ display: flex; flex-direction: column; gap: 12px; }}
   .analyst-card {{ background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }}
   .analyst-header {{ margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }}
   .analyst-card p {{ color: var(--muted); font-size: 0.83rem; line-height: 1.5; }}
@@ -401,7 +603,7 @@ def generate_summary_html(data: dict) -> str:
 <!-- Analyst Summaries -->
 <div class="card">
   <h2>Analyst Summaries</h2>
-  <div class="grid-2">{analyst_cards}</div>
+  <div class="analyst-grid">{analyst_cards}</div>
 </div>
 
 <!-- Bull vs Bear -->

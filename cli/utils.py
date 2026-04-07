@@ -236,21 +236,22 @@ def select_deep_thinking_agent(provider) -> str:
 def select_llm_provider() -> tuple[str, str | None]:
     """Select the LLM provider and its API endpoint."""
     BASE_URLS = [
+        ("Claude-CLI", None),  # uses local `claude` CLI subprocess (default)
         ("OpenAI", "https://api.openai.com/v1"),
         ("Google", None),  # google-genai SDK manages its own endpoint
         ("Anthropic", "https://api.anthropic.com/"),
         ("xAI", "https://api.x.ai/v1"),
         ("Openrouter", "https://openrouter.ai/api/v1"),
         ("Ollama", "http://localhost:11434/v1"),
-        ("Claude-CLI", None),  # uses local `claude` CLI subprocess
     ]
-    
+
     choice = questionary.select(
         "Select your LLM Provider:",
         choices=[
             questionary.Choice(display, value=(display, value))
             for display, value in BASE_URLS
         ],
+        default=("Claude-CLI", None),
         instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
         style=questionary.Style(
             [

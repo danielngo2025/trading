@@ -25,8 +25,10 @@ from rich.rule import Rule
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents import perf_logger
 from cli.models import AnalystType
 from cli.utils import *
+from cli.stock_lists import browse_and_select_tickers
 from cli.announcements import fetch_announcements, display_announcements
 from cli.stats_handler import StatsCallbackHandler
 
@@ -498,15 +500,14 @@ def get_user_selections():
             box_content += f"\n[dim]Default: {default}[/dim]"
         return Panel(box_content, border_style="blue", padding=(1, 2))
 
-    # Step 1: Ticker symbol
+    # Step 1: Ticker symbols — browse a stock list or enter manually
     console.print(
         create_question_box(
-            "Step 1: Ticker Symbol",
-            "Enter the exact ticker symbol to analyze, including exchange suffix when needed (examples: SPY, CNC.TO, 7203.T, 0700.HK)",
-            "SPY",
+            "Step 1: Ticker Selection",
+            "Browse a stock index list and select one or more tickers, or enter manually",
         )
     )
-    selected_ticker = get_ticker()
+    selected_tickers = browse_and_select_tickers()
 
     # Step 2: Analysis date
     default_date = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -596,7 +597,7 @@ def get_user_selections():
         anthropic_effort = ask_anthropic_effort()
 
     return {
-        "ticker": selected_ticker,
+        "tickers": selected_tickers,
         "analysis_date": analysis_date,
         "analysts": selected_analysts,
         "research_depth": selected_research_depth,
@@ -929,6 +930,23 @@ def run_analysis():
     # First get all user selections
     selections = get_user_selections()
 
+    tickers = selections["tickers"]
+    total = len(tickers)
+
+    for idx, ticker in enumerate(tickers, 1):
+        if total > 1:
+            console.print(f"\n[bold cyan]━━━ Analyzing {ticker} ({idx}/{total}) ━━━[/bold cyan]\n")
+
+        _run_single_analysis(selections, ticker)
+
+    if total > 1:
+        console.print(f"\n[bold green]All {total} analyses complete![/bold green]")
+
+
+def _run_single_analysis(selections: dict, ticker: str):
+    """Run analysis for a single ticker using the shared selections."""
+    perf_logger.reset()
+
     # Create config with selected research depth
     config = DEFAULT_CONFIG.copy()
     config["max_debate_rounds"] = selections["research_depth"]
@@ -965,7 +983,7 @@ def run_analysis():
     start_time = time.time()
 
     # Create result directory
-    results_dir = Path(config["results_dir"]) / selections["ticker"] / selections["analysis_date"]
+    results_dir = Path(config["results_dir"]) / ticker / selections["analysis_date"]
     results_dir.mkdir(parents=True, exist_ok=True)
     report_dir = results_dir / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -982,7 +1000,7 @@ def run_analysis():
             with open(log_file, "a") as f:
                 f.write(f"{timestamp} [{message_type}] {content}\n")
         return wrapper
-    
+
     def save_tool_call_decorator(obj, func_name):
         func = getattr(obj, func_name)
         @wraps(func)
@@ -1014,13 +1032,16 @@ def run_analysis():
 
     # Now start the display layout
     layout = create_layout()
+    final_state = None
 
-    with Live(layout, refresh_per_second=4) as live:
+    analysis_error = None
+    try:
+     with Live(layout, refresh_per_second=4) as live:
         # Initial display
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
         # Add initial messages
-        message_buffer.add_message("System", f"Selected ticker: {selections['ticker']}")
+        message_buffer.add_message("System", f"Selected ticker: {ticker}")
         message_buffer.add_message(
             "System", f"Analysis date: {selections['analysis_date']}"
         )
@@ -1037,13 +1058,13 @@ def run_analysis():
 
         # Create spinner text
         spinner_text = (
-            f"Analyzing {selections['ticker']} on {selections['analysis_date']}..."
+            f"Analyzing {ticker} on {selections['analysis_date']}..."
         )
         update_display(layout, spinner_text, stats_handler=stats_handler, start_time=start_time)
 
         # Initialize state and get graph args with callbacks
         init_agent_state = graph.propagator.create_initial_state(
-            selections["ticker"], selections["analysis_date"]
+            ticker, selections["analysis_date"]
         )
         # Pass callbacks to graph config for tool execution tracking
         # (LLM tracking is handled separately via LLM constructor)
@@ -1053,8 +1074,9 @@ def run_analysis():
         trace = []
         for chunk in graph.graph.stream(init_agent_state, **args):
             # Process messages if present (skip duplicates via message ID)
-            if len(chunk["messages"]) > 0:
-                last_message = chunk["messages"][-1]
+            messages = chunk.get("messages", [])
+            if messages and len(messages) > 0:
+                last_message = messages[-1]
                 msg_id = getattr(last_message, "id", None)
 
                 if msg_id != message_buffer._last_message_id:
@@ -1155,45 +1177,71 @@ def run_analysis():
             trace.append(chunk)
 
         # Get final state and decision
-        final_state = trace[-1]
-        decision = graph.process_signal(final_state["final_trade_decision"])
+        if not trace:
+            message_buffer.add_message("System", "Error: no output from analysis graph")
+            update_display(layout, stats_handler=stats_handler, start_time=start_time)
+        else:
+            final_state = trace[-1]
 
-        # Update all agent statuses to completed
-        for agent in message_buffer.agent_status:
-            message_buffer.update_agent_status(agent, "completed")
+            try:
+                final_decision = final_state.get("final_trade_decision", "")
+                if final_decision:
+                    decision = graph.process_signal(final_decision)
+            except Exception as e:
+                message_buffer.add_message("System", f"Signal processing error: {e}")
 
-        message_buffer.add_message(
-            "System", f"Completed analysis for {selections['analysis_date']}"
-        )
+            # Update all agent statuses to completed
+            for agent in message_buffer.agent_status:
+                message_buffer.update_agent_status(agent, "completed")
 
-        # Update final report sections
-        for section in message_buffer.report_sections.keys():
-            if section in final_state:
-                message_buffer.update_report_section(section, final_state[section])
+            message_buffer.add_message(
+                "System", f"Completed analysis for {selections['analysis_date']}"
+            )
 
-        update_display(layout, stats_handler=stats_handler, start_time=start_time)
+            # Update final report sections
+            for section in message_buffer.report_sections.keys():
+                if section in final_state:
+                    message_buffer.update_report_section(section, final_state[section])
+
+            update_display(layout, stats_handler=stats_handler, start_time=start_time)
+    except Exception as e:
+        analysis_error = e
 
     # Post-analysis prompts (outside Live context for clean interaction)
+    if analysis_error:
+        console.print(f"\n[red]Error during analysis: {analysis_error}[/red]\n")
+        import traceback
+        traceback.print_exc()
     console.print("\n[bold cyan]Analysis Complete![/bold cyan]\n")
 
+    # Print and save performance summary
+    perf_summary = perf_logger.format_summary()
+    console.print(perf_summary)
+    with open(results_dir / "perf_summary.txt", "w") as f:
+        f.write(perf_summary)
+
     # Prompt to save report
+    if final_state is None:
+        console.print("[yellow]No final state available — skipping report save.[/yellow]")
+        return
+
     save_choice = typer.prompt("Save report?", default="Y").strip().upper()
     if save_choice in ("Y", "YES", ""):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_path = Path.cwd() / "reports" / f"{selections['ticker']}_{timestamp}"
+        default_path = Path.cwd() / "reports" / f"{ticker}_{timestamp}"
         save_path_str = typer.prompt(
             "Save path (press Enter for default)",
             default=str(default_path)
         ).strip()
         save_path = Path(save_path_str)
         try:
-            report_file = save_report_to_disk(final_state, selections["ticker"], save_path)
+            report_file = save_report_to_disk(final_state, ticker, save_path)
             console.print(f"\n[green]✓ Report saved to:[/green] {save_path.resolve()}")
             console.print(f"  [dim]Complete report:[/dim] {report_file.name}")
 
             # Generate concise HTML summary with charts
             from cli.summary_report import save_summary_report
-            summary_file = save_summary_report(final_state, selections["ticker"], save_path)
+            summary_file = save_summary_report(final_state, ticker, save_path)
             console.print(f"  [dim]Summary report:[/dim]  {summary_file.name}")
 
             # Auto-open summary in browser
