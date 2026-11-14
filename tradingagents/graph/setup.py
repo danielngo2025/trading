@@ -57,16 +57,16 @@ class GraphSetup:
         self.conditional_logic = conditional_logic
 
     def setup_graph(
-        self, selected_analysts=["market", "social", "news", "fundamentals"]
+        self, selected_analysts=["market", "social", "news", "fundamentals"],
+        skip_risk_debate=False,
     ):
         """Set up and compile the agent workflow graph.
 
         Args:
-            selected_analysts (list): List of analyst types to include. Options are:
-                - "market": Market analyst
-                - "social": Social media analyst
-                - "news": News analyst
-                - "fundamentals": Fundamentals analyst
+            selected_analysts (list): List of analyst types to include.
+            skip_risk_debate (bool): If True, skip the 3-way risk debate
+                (Aggressive/Conservative/Neutral) and let Portfolio Manager
+                decide directly from the trader plan. Saves ~3 min.
         """
         if len(selected_analysts) == 0:
             raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
@@ -113,19 +113,21 @@ class GraphSetup:
             "Trader", create_trader(self.quick_thinking_llm, self.trader_memory)
         )
 
-        # Create risk analysis nodes
-        aggressive_analyst = _timed_node(
-            "Aggressive Analyst", create_aggressive_debator(self.quick_thinking_llm)
-        )
-        neutral_analyst = _timed_node(
-            "Neutral Analyst", create_neutral_debator(self.quick_thinking_llm)
-        )
-        conservative_analyst = _timed_node(
-            "Conservative Analyst", create_conservative_debator(self.quick_thinking_llm)
-        )
+        # Create risk analysis nodes (only if risk debate is enabled)
         portfolio_manager_node = _timed_node(
             "Portfolio Manager", create_portfolio_manager(self.deep_thinking_llm, self.portfolio_manager_memory)
         )
+
+        if not skip_risk_debate:
+            aggressive_analyst = _timed_node(
+                "Aggressive Analyst", create_aggressive_debator(self.quick_thinking_llm)
+            )
+            neutral_analyst = _timed_node(
+                "Neutral Analyst", create_neutral_debator(self.quick_thinking_llm)
+            )
+            conservative_analyst = _timed_node(
+                "Conservative Analyst", create_conservative_debator(self.quick_thinking_llm)
+            )
 
         # Create workflow
         workflow = StateGraph(AgentState)
@@ -145,10 +147,12 @@ class GraphSetup:
         workflow.add_node("Bear Researcher", bear_researcher_node)
         workflow.add_node("Research Manager", research_manager_node)
         workflow.add_node("Trader", trader_node)
-        workflow.add_node("Aggressive Analyst", aggressive_analyst)
-        workflow.add_node("Neutral Analyst", neutral_analyst)
-        workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
+
+        if not skip_risk_debate:
+            workflow.add_node("Aggressive Analyst", aggressive_analyst)
+            workflow.add_node("Neutral Analyst", neutral_analyst)
+            workflow.add_node("Conservative Analyst", conservative_analyst)
 
         # Define edges
         # Fan out: START → all analysts in parallel
@@ -170,7 +174,7 @@ class GraphSetup:
         # Single merge point: clear messages → Bull Researcher
         workflow.add_edge("Msg Clear Analysts", "Bull Researcher")
 
-        # Add remaining edges
+        # Investment debate edges
         workflow.add_conditional_edges(
             "Bull Researcher",
             self.conditional_logic.should_continue_debate,
@@ -188,31 +192,37 @@ class GraphSetup:
             },
         )
         workflow.add_edge("Research Manager", "Trader")
-        workflow.add_edge("Trader", "Aggressive Analyst")
-        workflow.add_conditional_edges(
-            "Aggressive Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Conservative Analyst": "Conservative Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Conservative Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Neutral Analyst": "Neutral Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Neutral Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Aggressive Analyst": "Aggressive Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
+
+        if skip_risk_debate:
+            # Skip risk debate: Trader → Portfolio Manager directly
+            workflow.add_edge("Trader", "Portfolio Manager")
+        else:
+            # Full risk debate: Trader → Aggressive → Conservative → Neutral → PM
+            workflow.add_edge("Trader", "Aggressive Analyst")
+            workflow.add_conditional_edges(
+                "Aggressive Analyst",
+                self.conditional_logic.should_continue_risk_analysis,
+                {
+                    "Conservative Analyst": "Conservative Analyst",
+                    "Portfolio Manager": "Portfolio Manager",
+                },
+            )
+            workflow.add_conditional_edges(
+                "Conservative Analyst",
+                self.conditional_logic.should_continue_risk_analysis,
+                {
+                    "Neutral Analyst": "Neutral Analyst",
+                    "Portfolio Manager": "Portfolio Manager",
+                },
+            )
+            workflow.add_conditional_edges(
+                "Neutral Analyst",
+                self.conditional_logic.should_continue_risk_analysis,
+                {
+                    "Aggressive Analyst": "Aggressive Analyst",
+                    "Portfolio Manager": "Portfolio Manager",
+                },
+            )
 
         workflow.add_edge("Portfolio Manager", END)
 

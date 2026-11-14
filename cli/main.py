@@ -548,6 +548,14 @@ def get_user_selections():
     )
     selected_research_depth = select_research_depth()
 
+    # Step 5b: Risk Debate
+    console.print(
+        create_question_box(
+            "Step 5b: Risk Debate", "Full 3-way debate or skip for faster analysis"
+        )
+    )
+    skip_risk_debate = ask_skip_risk_debate()
+
     # Step 6: LLM Provider
     console.print(
         create_question_box(
@@ -601,6 +609,7 @@ def get_user_selections():
         "analysis_date": analysis_date,
         "analysts": selected_analysts,
         "research_depth": selected_research_depth,
+        "skip_risk_debate": skip_risk_debate,
         "llm_provider": selected_llm_provider.lower(),
         "backend_url": backend_url,
         "shallow_thinker": selected_shallow_thinker,
@@ -951,6 +960,7 @@ def _run_single_analysis(selections: dict, ticker: str):
     config = DEFAULT_CONFIG.copy()
     config["max_debate_rounds"] = selections["research_depth"]
     config["max_risk_discuss_rounds"] = selections["research_depth"]
+    config["skip_risk_debate"] = selections.get("skip_risk_debate", False)
     config["quick_think_llm"] = selections["shallow_thinker"]
     config["deep_think_llm"] = selections["deep_thinker"]
     config["backend_url"] = selections["backend_url"]

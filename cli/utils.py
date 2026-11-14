@@ -134,6 +134,28 @@ def select_research_depth() -> int:
     return choice
 
 
+def ask_skip_risk_debate() -> bool:
+    """Ask whether to skip the 3-way risk debate for faster analysis."""
+    choice = questionary.select(
+        "Risk Debate Mode:",
+        choices=[
+            questionary.Choice("Full — Aggressive/Conservative/Neutral debate before final decision", value=False),
+            questionary.Choice("Skip — Portfolio Manager decides directly from trader plan (~3 min faster)", value=True),
+        ],
+        instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
+        style=questionary.Style([
+            ("selected", "fg:yellow noinherit"),
+            ("highlighted", "fg:yellow noinherit"),
+            ("pointer", "fg:yellow noinherit"),
+        ]),
+    ).ask()
+
+    if choice is None:
+        return False
+
+    return choice
+
+
 def _fetch_openrouter_models() -> List[Tuple[str, str]]:
     """Fetch available models from the OpenRouter API."""
     import requests

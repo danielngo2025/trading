@@ -22,6 +22,7 @@ DEFAULT_CONFIG = {
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,
+    "skip_risk_debate": False,     # True = skip Aggressive/Conservative/Neutral, PM decides from trader plan directly
     "max_recur_limit": 100,
     # Data vendor configuration
     # Category-level configuration (default for all tools in category)
