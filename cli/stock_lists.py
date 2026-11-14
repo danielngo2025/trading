@@ -120,6 +120,10 @@ def _extract_tickers(df: pd.DataFrame, suffix: str) -> list[dict]:
 
         # Clean ticker: remove anything after newline, take first word
         raw_ticker = raw_ticker.split("\n")[0].split()[0].strip()
+        if suffix and raw_ticker.endswith(suffix):
+            raw_ticker = raw_ticker[: -len(suffix)]
+        # Yahoo writes share classes with a hyphen (CTC-A.TO, BRK-B); the dotted form returns no data.
+        raw_ticker = raw_ticker.replace(".", "-")
 
         # Apply exchange suffix if not already present
         if suffix and not raw_ticker.endswith(suffix):
