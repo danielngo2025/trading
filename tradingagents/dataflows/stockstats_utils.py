@@ -57,6 +57,10 @@ def cached_fetch(category: str, key: str, fetch_fn, ttl_seconds: int | None = No
     elapsed = time.time() - t0
     perf_logger.log_time(f"data:{category}", "fetch", elapsed, key)
 
+    # Fetchers return failures as text; caching them would replay the outage for the whole TTL.
+    if isinstance(result, str) and result.lstrip().startswith("Error"):
+        return result
+
     with open(path, "w", encoding="utf-8") as f:
         f.write(result)
     return result
