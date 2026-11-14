@@ -245,7 +245,8 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
   }, [analyses.data]);
   const lastDate = useMemo(() => {
     const map = new Map<string, string>();
-    analyses.data?.analyses.forEach((a) => map.set(a.ticker, a.trade_date));
+    // Mirrors the server: results with data gaps are re-run, not reused.
+    analyses.data?.analyses.forEach((a) => a.warnings.length === 0 && map.set(a.ticker, a.trade_date));
     return map;
   }, [analyses.data]);
 
