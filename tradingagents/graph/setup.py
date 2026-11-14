@@ -159,17 +159,25 @@ class GraphSetup:
         for analyst_type in selected_analysts:
             workflow.add_edge(START, f"{analyst_type.capitalize()} Analyst")
 
-        # Each analyst has its own tool loop; when done, fan in to merge clear
+        # Each analyst ends at its own Done node; a plain multi-edge into Msg Clear
+        # would fire once per analyst and re-run everything downstream.
+        done_nodes = []
         for analyst_type in selected_analysts:
             current_analyst = f"{analyst_type.capitalize()} Analyst"
             current_tools = f"tools_{analyst_type}"
+            done_node = f"{current_analyst} Done"
+            workflow.add_node(done_node, lambda state: {})
+            done_nodes.append(done_node)
 
             workflow.add_conditional_edges(
                 current_analyst,
                 getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
-                [current_tools, "Msg Clear Analysts"],
+                {current_tools: current_tools, "Msg Clear Analysts": done_node},
             )
             workflow.add_edge(current_tools, current_analyst)
+
+        # Join: waits for every analyst before clearing messages once
+        workflow.add_edge(done_nodes, "Msg Clear Analysts")
 
         # Single merge point: clear messages → Bull Researcher
         workflow.add_edge("Msg Clear Analysts", "Bull Researcher")
