@@ -97,14 +97,12 @@ def _parse_tool_calls(text: str) -> List[Dict[str, Any]]:
     return tool_calls
 
 
-def _parse_stream_json(stdout: str) -> str:
-    """Parse Claude CLI --output-format stream-json output.
-
-    Extracts assistant text blocks from the JSON stream, falling back to
-    the final result summary.
-    """
+def _parse_stream_json(stdout: str) -> tuple[str, dict, str | None]:
+    """Parse Claude CLI --output-format stream-json output into (text, usage, error)."""
     assistant_texts = []
     result_text = ""
+    usage: dict = {}
+    error = None
 
     for raw_line in stdout.splitlines():
         line = raw_line.strip()
@@ -129,8 +127,12 @@ def _parse_stream_json(stdout: str) -> str:
 
         elif etype == "result":
             result_text = event.get("result", "")
+            usage = event.get("usage") or {}
+            if event.get("is_error"):
+                error = result_text or event.get("subtype", "unknown error")
 
-    return "\n\n".join(assistant_texts) if assistant_texts else result_text
+    text = "\n\n".join(assistant_texts) if assistant_texts else result_text
+    return text, usage, error
 
 
 class ClaudeCLIChatModel(BaseChatModel):
@@ -181,6 +183,12 @@ class ClaudeCLIChatModel(BaseChatModel):
             "--verbose",
             "--model", self.model,
             "--max-turns", "1",
+            # Drop Claude Code's own prompt, tools, MCP servers and skills: ~46k → ~0.5k tokens per call.
+            "--system-prompt", "You are a financial analysis assistant. Answer in plain text.",
+            "--tools", "",
+            "--strict-mcp-config",
+            "--setting-sources", "",
+            "--disable-slash-commands",
         ]
 
         try:
@@ -205,7 +213,9 @@ class ClaudeCLIChatModel(BaseChatModel):
                 f"Claude CLI failed (exit {result.returncode}): {stderr}"
             )
 
-        response_text = _parse_stream_json(stdout)
+        response_text, usage, error = _parse_stream_json(stdout)
+        if error or "[claude-code:" in response_text[:40]:
+            raise RuntimeError(f"Claude CLI error ({self.model}): {error or response_text[:300]}")
         if not response_text:
             response_text = stdout
 
@@ -225,9 +235,14 @@ class ClaudeCLIChatModel(BaseChatModel):
         else:
             clean_text = response_text
 
+        input_tokens = sum(usage.get(k, 0) for k in
+                           ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+        output_tokens = usage.get("output_tokens", 0)
         message = AIMessage(
             content=clean_text,
             tool_calls=tool_calls,
+            usage_metadata={"input_tokens": input_tokens, "output_tokens": output_tokens,
+                            "total_tokens": input_tokens + output_tokens},
         )
 
         return ChatResult(generations=[ChatGeneration(message=message)])
@@ -263,6 +278,7 @@ class ClaudeCLIClient(BaseLLMClient):
         return ClaudeCLIChatModel(
             model=self.model,
             timeout_sec=self.kwargs.get("timeout", 300),
+            callbacks=self.kwargs.get("callbacks"),
         )
 
     def validate_model(self) -> bool:

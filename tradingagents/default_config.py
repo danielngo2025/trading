@@ -9,8 +9,8 @@ DEFAULT_CONFIG = {
     ),
     # LLM settings
     "llm_provider": "claude-cli",
-    "deep_think_llm": "claude-cli",
-    "quick_think_llm": "claude-cli",
+    "deep_think_llm": "claude-sonnet-4-6",
+    "quick_think_llm": "claude-sonnet-4-6",
     "backend_url": None,
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
