@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 
 from tradingagents.default_config import DEFAULT_CONFIG
+from web.api.quality import data_warnings
 
 ROOT = Path(DEFAULT_CONFIG["results_dir"]).resolve() / "web"
 ANALYSES = ROOT / "analyses"
@@ -59,6 +60,7 @@ def latest_analyses() -> list[dict]:
         full = get_analysis(folder.name, dates[0])
         if full:
             summary = {k: v for k, v in full.items() if k != "reports"}
+            summary["warnings"] = data_warnings(full.get("reports") or {})
             summary["history"] = [
                 {"trade_date": d, "rating": (get_analysis(folder.name, d) or {}).get("rating")}
                 for d in dates[:6]

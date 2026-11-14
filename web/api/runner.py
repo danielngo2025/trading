@@ -7,10 +7,13 @@ import threading
 import time
 import traceback
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta
+
+from langchain_core.callbacks import BaseCallbackHandler
 
 from tradingagents.default_config import DEFAULT_CONFIG
 from web.api import store
+from web.api.quality import data_warnings
 from web.api.universe import _quote
 
 log = logging.getLogger(__name__)
@@ -59,6 +62,54 @@ def _extract_reports(state: dict) -> dict:
     }
 
 
+# Fundamentals only move on earnings, so a recent report is as good as a fresh one.
+FUNDAMENTALS_MAX_AGE_DAYS = 7
+ALL_ANALYSTS = ["market", "social", "news", "fundamentals"]
+
+
+class TokenCounter(BaseCallbackHandler):
+    """Sums LLM token usage; analysts run in parallel threads, hence the lock."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.reset()
+
+    def reset(self):
+        with self._lock:
+            self.input = self.output = self.calls = 0
+
+    def on_llm_end(self, response, **kwargs):
+        for gens in response.generations:
+            for gen in gens:
+                usage = getattr(getattr(gen, "message", None), "usage_metadata", None) or {}
+                with self._lock:
+                    self.input += usage.get("input_tokens", 0)
+                    self.output += usage.get("output_tokens", 0)
+                    self.calls += 1
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {"input": self.input, "output": self.output, "calls": self.calls}
+
+
+def _recent_fundamentals(ticker: str, trade_date: str) -> dict | None:
+    target = datetime.strptime(trade_date, "%Y-%m-%d")
+    for d in store.analysis_dates(ticker):
+        age = (target - datetime.strptime(d, "%Y-%m-%d")).days
+        if 0 <= age <= FUNDAMENTALS_MAX_AGE_DAYS:
+            text = ((store.get_analysis(ticker, d) or {}).get("reports") or {}).get("fundamentals")
+            # Don't carry a report forward that never had real figures in it.
+            if text and not any(w.startswith("Fundamentals") for w in data_warnings({"fundamentals": text})):
+                return {"date": d, "text": text}
+    return None
+
+
+def _resolve_trade_date(requested: str) -> str:
+    # Same roll-back the graph applies, so a Saturday request finds Friday's saved analysis.
+    from tradingagents.graph.propagation import _last_trading_day
+    return _last_trading_day(requested)
+
+
 def _update_item(run: dict, ticker: str, **fields) -> None:
     with _run_lock:
         if run["id"] in _cancelled:
@@ -69,17 +120,21 @@ def _update_item(run: dict, ticker: str, **fields) -> None:
         store.save_run(run)
 
 
-def _analyze(graph, run: dict, ticker: str, company: str | None) -> None:
+def _analyze(graph, counter: TokenCounter, run: dict, ticker: str, company: str | None,
+             reused_fundamentals: dict | None) -> None:
     started = time.time()
+    counter.reset()
     _update_item(run, ticker, status="running", stage=STAGES[0][0], started_at=started)
 
     state = graph.propagator.create_initial_state(ticker, run["trade_date"])
+    if reused_fundamentals:
+        state["fundamentals_report"] = reused_fundamentals["text"]
     final = None
     for chunk in graph.graph.stream(state, **graph.propagator.get_graph_args()):
         final = chunk
         done = sum(1 for _, _, has in STAGES if has(chunk))
         stage = STAGES[min(done, len(STAGES) - 1)][0]
-        _update_item(run, ticker, stage=stage, stages_done=done)
+        _update_item(run, ticker, stage=stage, stages_done=done, tokens=counter.snapshot())
 
     if final is None:
         raise RuntimeError("Graph produced no output")
@@ -100,11 +155,13 @@ def _analyze(graph, run: dict, ticker: str, company: str | None) -> None:
         "model": {"provider": run["config"]["llm_provider"], "deep": run["config"]["deep_think_llm"],
                   "quick": run["config"]["quick_think_llm"]},
         "quote": _quote(ticker),
+        "tokens": counter.snapshot(),
+        "reused": {"fundamentals": reused_fundamentals["date"]} if reused_fundamentals else {},
         "reports": _extract_reports(final),
     }
     store.save_analysis(analysis)
     _update_item(run, ticker, status="done", stage=None, stages_done=len(STAGES),
-                 rating=analysis["rating"], finished_at=time.time())
+                 rating=analysis["rating"], tokens=analysis["tokens"], finished_at=time.time())
 
 
 def _execute(run_id: str) -> None:
@@ -117,22 +174,43 @@ def _execute(run_id: str) -> None:
     run["started_at"] = time.time()
     store.save_run(run)
 
+    counter = TokenCounter()
+    graphs: dict[tuple, object] = {}
+
+    def graph_for(analysts: list[str]):
+        # Graphs are compiled per analyst set; tickers with reused fundamentals skip that analyst.
+        key = tuple(analysts)
+        if key not in graphs:
+            graphs[key] = TradingAgentsGraph(selected_analysts=analysts, config=full_config(run), callbacks=[counter])
+        return graphs[key]
+
     try:
-        graph = TradingAgentsGraph(config=full_config(run))
+        graph_for(ALL_ANALYSTS)
+        trade_date = _resolve_trade_date(run["trade_date"])
     except Exception as exc:
         run.update(status="failed", error=f"Could not start agents: {exc}", finished_at=time.time())
         store.save_run(run)
         return
 
     for item in run["items"]:
+        ticker = item["ticker"]
         if run_id in _cancelled:
-            _update_item(run, item["ticker"], status="cancelled")
+            _update_item(run, ticker, status="cancelled")
+            continue
+        existing = None if run.get("force") else store.get_analysis(ticker, trade_date)
+        if existing:
+            now = time.time()
+            _update_item(run, ticker, status="done", stages_done=len(STAGES), rating=existing["rating"],
+                         cached=True, tokens={"input": 0, "output": 0, "calls": 0}, started_at=now, finished_at=now)
             continue
         try:
-            _analyze(graph, run, item["ticker"], item.get("company"))
+            reuse = run.get("reuse_fundamentals") and not run.get("force")
+            fundamentals = _recent_fundamentals(ticker, trade_date) if reuse else None
+            analysts = [a for a in ALL_ANALYSTS if not (fundamentals and a == "fundamentals")]
+            _analyze(graph_for(analysts), counter, run, ticker, item.get("company"), fundamentals)
         except Exception as exc:
-            log.exception("Analysis failed for %s", item["ticker"])
-            _update_item(run, item["ticker"], status="failed", error=str(exc),
+            log.exception("Analysis failed for %s", ticker)
+            _update_item(run, ticker, status="failed", error=str(exc),
                          trace=traceback.format_exc()[-2000:], finished_at=time.time())
 
     cancelled = run_id in _cancelled
@@ -163,15 +241,25 @@ def start_worker() -> None:
     threading.Thread(target=_worker, daemon=True, name="ta-runner").start()
 
 
-def create_run(tickers: list[dict], trade_date: str | None, quick: bool) -> dict:
+def create_run(tickers: list[dict], trade_date: str | None, quick: bool, provider: str | None = None,
+               deep_model: str | None = None, quick_model: str | None = None, force: bool = False,
+               reuse_fundamentals: bool = True) -> dict:
     config = DEFAULT_CONFIG.copy()
     config["skip_risk_debate"] = quick
+    if provider:
+        config["llm_provider"] = provider
+    if deep_model:
+        config["deep_think_llm"] = deep_model
+    if quick_model:
+        config["quick_think_llm"] = quick_model
     run = {
         "id": time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6],
         "created_at": time.time(),
         "trade_date": trade_date or date.today().isoformat(),
         "status": "queued",
         "quick": quick,
+        "force": force,
+        "reuse_fundamentals": reuse_fundamentals,
         "config": {k: config[k] for k in ("llm_provider", "deep_think_llm", "quick_think_llm",
                                           "max_debate_rounds", "max_risk_discuss_rounds",
                                           "skip_risk_debate")} | {"data_vendors": config["data_vendors"]},

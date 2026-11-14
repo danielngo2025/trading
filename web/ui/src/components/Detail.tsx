@@ -17,6 +17,7 @@ import {
   marketCap,
   price,
   signed,
+  tokens,
 } from "./shared";
 
 type Section = "analysts" | "research" | "trader" | "risk";
@@ -101,7 +102,14 @@ export function Detail({ ticker, onBack }: { ticker: string; onBack: () => void 
     { label: "Mkt cap", value: marketCap(data.quote.market_cap) },
     { label: "As of", value: age === 0 ? data.trade_date : `${data.trade_date} · ${age}d`, className: age > 7 ? "text-destructive" : "" },
     { label: "Took", value: duration(data.duration_s) },
-    { label: "Model", value: data.model.deep },
+    {
+      label: "Tokens",
+      value: data.tokens ? `${tokens(data.tokens)} · ${data.tokens.calls} calls` : "—",
+    },
+    {
+      label: "Model",
+      value: data.model.quick === data.model.deep ? data.model.deep : `${data.model.deep} / ${data.model.quick}`,
+    },
   ];
   const active = SECTIONS.find((s) => s.value === section)!;
 
@@ -127,7 +135,7 @@ export function Detail({ ticker, onBack }: { ticker: string; onBack: () => void 
         )}
       </div>
 
-      <div className="border border-border grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-px bg-border">
+      <div className="border border-border grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-px bg-border">
         {stats.map((s) => (
           <div key={s.label} className="bg-background px-3 py-2 min-w-0">
             <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">{s.label}</div>
@@ -136,12 +144,33 @@ export function Detail({ ticker, onBack }: { ticker: string; onBack: () => void 
         ))}
       </div>
 
+      {data.warnings.length > 0 && (
+        <div className="border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs space-y-1">
+          <div className="font-mono text-[10px] uppercase tracking-widest text-destructive">
+            Data gaps — don&apos;t act on this rating
+          </div>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {data.warnings.map((w) => <li key={w}>{w}</li>)}
+          </ul>
+          <p className="text-muted-foreground">
+            The agents still produced a confident decision, but it rests on missing inputs. Re-run with Force re-run
+            (try a stronger quick model), or check these figures yourself.
+          </p>
+        </div>
+      )}
+
       <div className="space-y-2">
         <BlockHeading title="Portfolio manager decision" />
         <div className="border border-border px-4 py-3 bg-muted/30">
           <Markdown text={data.reports.final} />
         </div>
       </div>
+
+      {data.reused?.fundamentals && (
+        <Notice label="Reused">
+          The fundamentals report is from the {data.reused.fundamentals} analysis, not re-run for this date.
+        </Notice>
+      )}
 
       {age > 7 && (
         <Notice label="Stale">

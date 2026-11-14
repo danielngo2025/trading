@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Play, RefreshCw, Square } from "lucide-react";
-import { api, queryKeys, type Run, type Rating } from "../api";
+import { api, queryKeys, type Models, type Run, type Rating } from "../api";
 import {
   BlockHeading,
   Notice,
@@ -15,10 +15,82 @@ import {
   marketCap,
   price,
   signed,
+  tokens,
 } from "./shared";
 
 // Rough per-stock wall time; the agents make ~15–25 sequential LLM calls.
 const MINUTES_PER_STOCK = { full: 6, quick: 4 };
+
+interface ModelChoice {
+  provider: string;
+  deep: string;
+  quick: string;
+}
+
+const MODEL_KEY = "ta.modelChoice";
+
+function loadChoice(): ModelChoice | null {
+  try {
+    return JSON.parse(localStorage.getItem(MODEL_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps the saved choice only while it still exists in the catalog. */
+function validChoice(models: Models, choice: ModelChoice | null): ModelChoice {
+  const provider = models.providers.find((p) => p.key === choice?.provider && p.available);
+  if (provider && choice) {
+    const deep = provider.deep.some((o) => o.value === choice.deep) ? choice.deep : provider.deep[0].value;
+    const quick = provider.quick.some((o) => o.value === choice.quick) ? choice.quick : provider.quick[0].value;
+    return { provider: provider.key, deep, quick };
+  }
+  return models.default;
+}
+
+const selectClass =
+  "h-8 px-2 text-xs border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring min-w-0";
+
+function ModelPicker({ models, value, onChange }: { models: Models; value: ModelChoice; onChange: (v: ModelChoice) => void }) {
+  const provider = models.providers.find((p) => p.key === value.provider);
+  return (
+    <div className="border border-border grid grid-cols-1 sm:grid-cols-3 gap-px bg-border">
+      <label className="bg-background px-3 py-2 space-y-1">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">Provider</div>
+        <select
+          value={value.provider}
+          onChange={(e) => {
+            const next = models.providers.find((p) => p.key === e.target.value)!;
+            onChange({ provider: next.key, deep: next.deep[0].value, quick: next.quick[0].value });
+          }}
+          className={`${selectClass} w-full`}
+        >
+          {models.providers.map((p) => (
+            <option key={p.key} value={p.key} disabled={!p.available}>
+              {p.label}{p.available ? "" : " — not set up"}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="bg-background px-3 py-2 space-y-1">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground" title="Research manager and portfolio manager — the final calls">
+          Deep model · final decisions
+        </div>
+        <select value={value.deep} onChange={(e) => onChange({ ...value, deep: e.target.value })} className={`${selectClass} w-full`}>
+          {provider?.deep.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </label>
+      <label className="bg-background px-3 py-2 space-y-1">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground" title="Analysts, researchers, trader, risk debaters — most of the calls">
+          Quick model · most calls
+        </div>
+        <select value={value.quick} onChange={(e) => onChange({ ...value, quick: e.target.value })} className={`${selectClass} w-full`}>
+          {provider?.quick.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </label>
+    </div>
+  );
+}
 
 function StageBar({ run, done, running }: { run: Run; done: number; running: boolean }) {
   return (
@@ -33,6 +105,13 @@ function StageBar({ run, done, running }: { run: Run; done: number; running: boo
         />
       ))}
     </div>
+  );
+}
+
+function totalTokens(run: Run) {
+  return run.items.reduce(
+    (sum, i) => ({ input: sum.input + (i.tokens?.input ?? 0), output: sum.output + (i.tokens?.output ?? 0) }),
+    { input: 0, output: 0 },
   );
 }
 
@@ -54,7 +133,11 @@ export function ActiveRun({ run, onSelect }: { run: Run; onSelect: (ticker: stri
           {run.quick && <span className="text-[10px] font-mono text-muted-foreground ml-2">QUICK</span>}
         </span>
         <span className="text-xs text-muted-foreground font-mono tabular-nums">
-          {finished}/{run.items.length} done
+          {finished}/{run.items.length} done · {tokens(totalTokens(run))} tok
+        </span>
+        <span className="text-[10px] text-muted-foreground font-mono hidden md:inline">
+          {run.config.deep_think_llm}
+          {run.config.quick_think_llm !== run.config.deep_think_llm && ` / ${run.config.quick_think_llm}`}
         </span>
         <div className="flex-1" />
         <StatusBadge status={run.status} />
@@ -86,7 +169,13 @@ export function ActiveRun({ run, onSelect }: { run: Run; onSelect: (ticker: stri
                   ) : null}
                 </td>
                 <td className="px-3 py-1.5 text-xs font-mono tabular-nums text-muted-foreground hidden md:table-cell">
-                  {item.started_at && item.finished_at ? duration(Math.round(item.finished_at - item.started_at)) : ""}
+                  {item.cached ? "cached" : item.started_at && item.finished_at ? duration(Math.round(item.finished_at - item.started_at)) : ""}
+                </td>
+                <td
+                  className="px-3 py-1.5 text-xs font-mono tabular-nums text-muted-foreground hidden md:table-cell"
+                  title={item.tokens ? `${item.tokens.calls} LLM calls · ${item.tokens.input.toLocaleString()} in / ${item.tokens.output.toLocaleString()} out` : undefined}
+                >
+                  {item.tokens && (item.status === "running" || item.status === "done") ? `${tokens(item.tokens)} tok` : ""}
                 </td>
                 <td className="px-3 py-1.5 text-right">
                   {item.rating ? <RatingBadge rating={item.rating} /> : <StatusBadge status={item.status} />}
@@ -106,6 +195,22 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
   const [sector, setSector] = useState("all");
   const [tradeDate, setTradeDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [quick, setQuick] = useState(false);
+  const [force, setForce] = useState(false);
+  const [reuseFundamentals, setReuseFundamentals] = useState(true);
+  const [choice, setChoice] = useState<ModelChoice | null>(null);
+
+  const models = useQuery({ queryKey: queryKeys.models, queryFn: api.models, staleTime: Infinity });
+  useEffect(() => {
+    if (models.data && !choice) setChoice(validChoice(models.data, loadChoice()));
+  }, [models.data, choice]);
+  const updateChoice = (next: ModelChoice) => {
+    setChoice(next);
+    try {
+      localStorage.setItem(MODEL_KEY, JSON.stringify(next));
+    } catch {
+      /* private mode */
+    }
+  };
 
   const universe = useQuery({ queryKey: queryKeys.universe, queryFn: () => api.universe(), staleTime: Infinity });
   const analyses = useQuery({ queryKey: queryKeys.analyses, queryFn: api.analyses });
@@ -120,6 +225,11 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
         tickers: stocks.map((s) => ({ ticker: s.ticker, company: s.company })),
         trade_date: tradeDate,
         quick,
+        provider: choice!.provider,
+        deep_model: choice!.deep,
+        quick_model: choice!.quick,
+        force,
+        reuse_fundamentals: reuseFundamentals,
       });
     },
     onSuccess: () => {
@@ -131,6 +241,11 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
   const lastRating = useMemo(() => {
     const map = new Map<string, Rating>();
     analyses.data?.analyses.forEach((a) => map.set(a.ticker, a.rating));
+    return map;
+  }, [analyses.data]);
+  const lastDate = useMemo(() => {
+    const map = new Map<string, string>();
+    analyses.data?.analyses.forEach((a) => map.set(a.ticker, a.trade_date));
     return map;
   }, [analyses.data]);
 
@@ -147,6 +262,7 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
     });
 
   const estimate = selected.size * MINUTES_PER_STOCK[quick ? "quick" : "full"];
+  const alreadyDone = [...selected].filter((t) => lastDate.get(t) === tradeDate).length;
 
   return (
     <div className="space-y-4">
@@ -159,6 +275,26 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
             Refresh prices
           </button>
         </BlockHeading>
+
+        {models.data && choice && <ModelPicker models={models.data} value={choice} onChange={updateChoice} />}
+
+        <div className="flex items-center gap-x-4 gap-y-1.5 flex-wrap text-xs text-muted-foreground">
+          <label
+            className="flex items-center gap-1.5"
+            title="Skips the aggressive/conservative/neutral risk debate. Faster and cheaper, but the risk case is thinner."
+          >
+            <input type="checkbox" checked={quick} onChange={(e) => setQuick(e.target.checked)} />
+            Quick (skip risk debate)
+          </label>
+          <label className="flex items-center gap-1.5" title="Fundamentals only change on earnings; reuse a report from the last 7 days instead of re-running that analyst.">
+            <input type="checkbox" checked={reuseFundamentals} onChange={(e) => setReuseFundamentals(e.target.checked)} />
+            Reuse fundamentals &lt; 7 days old
+          </label>
+          <label className="flex items-center gap-1.5" title="By default a stock already analysed for this date is skipped and its saved result reused.">
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+            Force re-run (ignore saved results)
+          </label>
+        </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
@@ -192,17 +328,10 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
               className="h-8 px-2 text-xs font-mono border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </label>
-          <label
-            className="flex items-center gap-1.5 text-xs text-muted-foreground"
-            title="Skips the aggressive/conservative/neutral risk debate. Faster and cheaper, but the risk case is thinner."
-          >
-            <input type="checkbox" checked={quick} onChange={(e) => setQuick(e.target.checked)} />
-            Quick (skip risk debate)
-          </label>
           <button
             className={btnPrimary}
             onClick={() => start.mutate()}
-            disabled={selected.size === 0 || busy || start.isPending}
+            disabled={selected.size === 0 || busy || start.isPending || !choice}
             title={busy ? "Wait for the current run to finish" : undefined}
           >
             <Play className="h-3 w-3" />
@@ -212,9 +341,9 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
 
         {selected.size > 0 && (
           <Notice label="Estimate">
-            About {estimate} minutes, one stock at a time. Each stock runs the full analyst → debate → trader → risk
-            pipeline on {activeRun?.config.deep_think_llm ?? "the configured model"}, so token cost scales with the
-            count.
+            Up to {estimate} minutes, one stock at a time, on {choice?.quick}
+            {choice && choice.deep !== choice.quick && ` (final calls on ${choice.deep})`}.
+            {!force && alreadyDone > 0 && ` ${alreadyDone} already analysed for ${tradeDate} will be reused at no cost.`}
           </Notice>
         )}
         {start.error && <Notice label="Error">{(start.error as Error).message}</Notice>}

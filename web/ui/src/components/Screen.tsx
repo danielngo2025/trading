@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ListFilter, TrendingUp } from "lucide-react";
+import { AlertTriangle, ListFilter, TrendingUp } from "lucide-react";
 import { api, queryKeys, type AnalysisSummary, type Rating } from "../api";
 import {
   EmptyState,
@@ -44,7 +44,14 @@ function Row({ a, onSelect }: { a: AnalysisSummary; onSelect: (ticker: string) =
         <div className="text-[11px] text-muted-foreground truncate max-w-[200px]">{a.company ?? "—"}</div>
       </td>
       <td className="px-3 py-2">
-        <RatingBadge rating={a.rating} />
+        <div className="flex items-center gap-1.5">
+          <RatingBadge rating={a.rating} />
+          {a.warnings.length > 0 && (
+            <span title={`Data gaps:\n${a.warnings.join("\n")}`} className="text-destructive inline-flex">
+              <AlertTriangle className="h-3.5 w-3.5" />
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-3 py-2 hidden md:table-cell">
         <RatingTrail history={a.history} />
@@ -86,6 +93,7 @@ export function Screen({ onSelect }: { onSelect: (ticker: string) => void }) {
     .filter((a) => filter === "all" || a.rating === filter)
     .sort((x, y) => RATING_ORDER[x.rating] - RATING_ORDER[y.rating] || x.ticker.localeCompare(y.ticker));
   const stale = all.filter((a) => daysSince(a.trade_date) > STALE_DAYS).length;
+  const gaps = all.filter((a) => a.warnings.length > 0).length;
 
   return (
     <div className="space-y-3">
@@ -95,6 +103,7 @@ export function Screen({ onSelect }: { onSelect: (ticker: string) => void }) {
           <ListFilter className="h-3.5 w-3.5" />
           {rows.length} of {all.length} shown
           {stale > 0 && <span className="text-destructive">· {stale} older than {STALE_DAYS} days</span>}
+          {gaps > 0 && <span className="text-destructive">· {gaps} with data gaps</span>}
         </div>
       </div>
 

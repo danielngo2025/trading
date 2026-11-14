@@ -20,6 +20,30 @@ export interface Universe {
   stocks: UniverseStock[];
 }
 
+export interface Tokens {
+  input: number;
+  output: number;
+  calls: number;
+}
+
+export interface ModelOption {
+  value: string;
+  label: string;
+}
+
+export interface Provider {
+  key: string;
+  label: string;
+  available: boolean;
+  deep: ModelOption[];
+  quick: ModelOption[];
+}
+
+export interface Models {
+  providers: Provider[];
+  default: { provider: string; deep: string; quick: string };
+}
+
 export type ReportKey =
   | "market" | "sentiment" | "news" | "fundamentals"
   | "bull" | "bear" | "research_manager" | "trader"
@@ -35,6 +59,9 @@ export interface AnalysisSummary {
   duration_s: number;
   model: { provider: string; deep: string; quick: string };
   quote: Quote;
+  tokens?: Tokens;
+  reused?: { fundamentals?: string };
+  warnings: string[];
   history: { trade_date: string; rating: Rating | null }[];
 }
 
@@ -52,6 +79,8 @@ export interface RunItem {
   stage: string | null;
   stages_done: number;
   rating?: Rating;
+  tokens?: Tokens;
+  cached?: boolean;
   error?: string;
   started_at?: number;
   finished_at?: number;
@@ -63,6 +92,8 @@ export interface Run {
   trade_date: string;
   status: "queued" | "running" | "done" | "failed" | "cancelled" | "interrupted";
   quick: boolean;
+  force?: boolean;
+  reuse_fundamentals?: boolean;
   error?: string;
   cancel_requested?: boolean;
   config: { llm_provider: string; deep_think_llm: string; quick_think_llm: string };
@@ -88,7 +119,17 @@ export const api = {
   analysis: (ticker: string, date?: string) =>
     request<Analysis>(`/api/analyses/${encodeURIComponent(ticker)}${date ? `?date=${date}` : ""}`),
   runs: () => request<{ runs: Run[] }>("/api/runs"),
-  createRun: (body: { tickers: { ticker: string; company?: string }[]; trade_date?: string; quick: boolean }) =>
+  models: () => request<Models>("/api/models"),
+  createRun: (body: {
+    tickers: { ticker: string; company?: string }[];
+    trade_date?: string;
+    quick: boolean;
+    provider: string;
+    deep_model: string;
+    quick_model: string;
+    force: boolean;
+    reuse_fundamentals: boolean;
+  }) =>
     request<Run>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   cancelRun: (id: string) => request<Run>(`/api/runs/${id}/cancel`, { method: "POST" }),
 };
@@ -98,4 +139,5 @@ export const queryKeys = {
   analyses: ["analyses"] as const,
   analysis: (ticker: string, date?: string) => ["analysis", ticker, date ?? "latest"] as const,
   runs: ["runs"] as const,
+  models: ["models"] as const,
 };

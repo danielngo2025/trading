@@ -11,7 +11,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from web.api import runner, store
+from web.api import models, runner, store
+from web.api.quality import data_warnings
 from web.api.universe import get_universe
 
 load_dotenv()
@@ -37,11 +38,21 @@ class RunRequest(BaseModel):
     tickers: list[RunTicker] = Field(min_length=1, max_length=60)
     trade_date: str | None = None
     quick: bool = False
+    provider: str | None = None
+    deep_model: str | None = None
+    quick_model: str | None = None
+    force: bool = False
+    reuse_fundamentals: bool = True
 
 
 @app.get("/api/universe")
 def universe(refresh: bool = False):
     return get_universe(refresh=refresh)
+
+
+@app.get("/api/models")
+def list_models():
+    return models.list_models()
 
 
 @app.get("/api/analyses")
@@ -57,7 +68,7 @@ def analysis(ticker: str, date: str | None = None):
     found = store.get_analysis(ticker, date or dates[0])
     if not found:
         raise HTTPException(404, f"No analysis for {ticker} on {date}")
-    return {**found, "dates": dates}
+    return {**found, "dates": dates, "warnings": data_warnings(found.get("reports") or {})}
 
 
 @app.get("/api/runs")
@@ -78,7 +89,16 @@ def create_run(body: RunRequest):
     active = [r for r in store.list_runs() if r["status"] in ("queued", "running")]
     if active:
         raise HTTPException(409, f"Run {active[0]['id']} is still in progress")
-    return runner.create_run([t.model_dump() for t in body.tickers], body.trade_date, body.quick)
+    if body.provider:
+        default = models.list_models()["default"]
+        error = models.validate(body.provider, body.deep_model or default["deep"], body.quick_model or default["quick"])
+        if error:
+            raise HTTPException(400, error)
+    return runner.create_run(
+        [t.model_dump() for t in body.tickers], body.trade_date, body.quick,
+        provider=body.provider, deep_model=body.deep_model, quick_model=body.quick_model,
+        force=body.force, reuse_fundamentals=body.reuse_fundamentals,
+    )
 
 
 @app.post("/api/runs/{run_id}/cancel")

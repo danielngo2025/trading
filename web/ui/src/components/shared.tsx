@@ -106,6 +106,13 @@ export function duration(seconds: number): string {
   return m < 60 ? `${m}m ${seconds % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+export function tokens(t: { input: number; output: number } | undefined | null): string {
+  if (!t) return "—";
+  const total = t.input + t.output;
+  if (total === 0) return "0";
+  return total >= 1e6 ? `${(total / 1e6).toFixed(2)}M` : `${Math.round(total / 1000)}k`;
+}
+
 export function BlockHeading({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 flex-wrap">
