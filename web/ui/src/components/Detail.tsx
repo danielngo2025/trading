@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { WatchPanel } from "./Alerts";
+import { MarketPanel } from "./Charts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowLeft } from "lucide-react";
@@ -168,6 +169,8 @@ export function Detail({ ticker, onBack, onSelect }: {
           </p>
         </div>
       )}
+
+      <MarketPanel ticker={data.ticker} />
 
       <div className="space-y-2">
         <BlockHeading title="Portfolio manager decision" />

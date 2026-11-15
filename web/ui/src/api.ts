@@ -153,6 +153,34 @@ export interface Watch {
   suggestions: Record<string, { price: number; side: "above" | "below"; label: string }[]>;
 }
 
+export interface ChartPoint {
+  date: string;
+  close: number;
+  volume: number | null;
+  sma20: number | null;
+  sma50: number | null;
+  rsi: number | null;
+  macd: number | null;
+  signal: number | null;
+  hist: number | null;
+}
+
+export interface MarketEvent {
+  date: string;
+  days: number;
+  kind: "earnings" | "dividend";
+  label: string;
+  detail: string;
+}
+
+export interface Market {
+  points: ChartPoint[];
+  summary: Partial<Record<
+    "change_1w" | "change_1m" | "change_3m" | "change_1y" | "high_52w" | "low_52w" |
+    "rsi" | "macd" | "signal" | "sma20" | "sma50" | "sma200", number | null>>;
+  events: MarketEvent[];
+}
+
 const put = (body: unknown) => ({ method: "PUT", body: JSON.stringify(body) });
 
 export const api = {
@@ -160,6 +188,7 @@ export const api = {
   analyses: () => request<{ analyses: AnalysisSummary[] }>("/api/analyses"),
   analysis: (ticker: string, date?: string) =>
     request<Analysis>(`/api/analyses/${encodeURIComponent(ticker)}${date ? `?date=${date}` : ""}`),
+  market: (ticker: string) => request<Market>(`/api/market/${encodeURIComponent(ticker)}`),
   runs: () => request<{ runs: Run[] }>("/api/runs"),
   models: () => request<Models>("/api/models"),
   createRun: (body: {
@@ -188,6 +217,7 @@ export const queryKeys = {
   universe: ["universe"] as const,
   analyses: ["analyses"] as const,
   analysis: (ticker: string, date?: string) => ["analysis", ticker, date ?? "latest"] as const,
+  market: (ticker: string) => ["market", ticker] as const,
   runs: ["runs"] as const,
   models: ["models"] as const,
   watch: ["watch"] as const,

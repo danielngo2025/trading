@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from web.api import models, runner, store, watch
+from web.api import market, models, runner, store, watch
 from web.api.quality import data_warnings
 from web.api.universe import get_universe
 
@@ -84,6 +84,14 @@ def analysis(ticker: str, date: str | None = None):
     if not found:
         raise HTTPException(404, f"No analysis for {ticker} on {date}")
     return {**found, "dates": dates, "warnings": data_warnings(found.get("reports") or {}, (found.get("quote") or {}).get("price"))}
+
+
+@app.get("/api/market/{ticker}")
+def market_data(ticker: str):
+    try:
+        return {**market.chart(ticker), "events": market.events(ticker)}
+    except Exception as exc:
+        raise HTTPException(502, f"Could not load market data for {ticker}: {exc}")
 
 
 @app.get("/api/runs")
