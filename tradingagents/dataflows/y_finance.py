@@ -295,7 +295,8 @@ def get_fundamentals(
                 ("Operating Margin", info.get("operatingMargins")),
                 ("Return on Equity", info.get("returnOnEquity")),
                 ("Return on Assets", info.get("returnOnAssets")),
-                ("Debt to Equity", info.get("debtToEquity")),
+                # yfinance reports this as a percentage; agents read the bare number as a multiple.
+                ("Debt to Equity (x)", _pct_to_ratio(info.get("debtToEquity"))),
                 ("Current Ratio", info.get("currentRatio")),
                 ("Book Value", info.get("bookValue")),
                 ("Free Cash Flow", info.get("freeCashflow")),
@@ -315,6 +316,10 @@ def get_fundamentals(
             return f"Error retrieving fundamentals for {ticker}: {str(e)}"
 
     return cached_fetch("fundamentals", cache_key, _fetch)
+
+
+def _pct_to_ratio(value):
+    return round(value / 100, 2) if isinstance(value, (int, float)) else None
 
 
 def _get_financial_statement(ticker, freq, curr_date, statement_type):
