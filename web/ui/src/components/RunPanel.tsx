@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Play, RefreshCw, Square } from "lucide-react";
-import { api, queryKeys, type Models, type Run, type Rating } from "../api";
+import { ArrowDown, ArrowUp, Loader2, Play, RefreshCw, Square } from "lucide-react";
+import { api, queryKeys, type Models, type Run, type Rating, type UniverseStock } from "../api";
 import {
   BlockHeading,
   Notice,
@@ -28,6 +28,48 @@ interface ModelChoice {
 }
 
 const MODEL_KEY = "ta.modelChoice";
+
+type SortKey = "market_cap" | "price" | "sector";
+interface Sort {
+  key: SortKey;
+  desc: boolean;
+}
+const SORT_LABEL: Record<SortKey, string> = { market_cap: "market cap", price: "price", sector: "sector" };
+
+// Missing values always sink to the bottom, whichever the direction.
+function sortStocks(stocks: UniverseStock[], { key, desc }: Sort) {
+  return [...stocks].sort((a, b) => {
+    const x = a[key];
+    const y = b[key];
+    if (x == null || x === "") return y == null || y === "" ? 0 : 1;
+    if (y == null || y === "") return -1;
+    const cmp = typeof x === "string" ? x.localeCompare(y as string) : x - (y as number);
+    return (desc ? -cmp : cmp) || a.rank - b.rank;
+  });
+}
+
+function SortHeader({ label, col, sort, onSort, className }: {
+  label: string;
+  col: SortKey;
+  sort: Sort;
+  onSort: (key: SortKey) => void;
+  className: string;
+}) {
+  const active = sort.key === col;
+  const Arrow = sort.desc ? ArrowDown : ArrowUp;
+  return (
+    <th className={className} aria-sort={active ? (sort.desc ? "descending" : "ascending") : "none"}>
+      <button
+        type="button"
+        onClick={() => onSort(col)}
+        className={`inline-flex items-center gap-1 uppercase tracking-widest hover:text-foreground ${active ? "text-foreground" : ""}`}
+      >
+        {label}
+        {active && <Arrow className="h-3 w-3" />}
+      </button>
+    </th>
+  );
+}
 
 function loadChoice(): ModelChoice | null {
   try {
@@ -193,6 +235,7 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sector, setSector] = useState("all");
+  const [sort, setSort] = useState<Sort>({ key: "market_cap", desc: true });
   const [tradeDate, setTradeDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [quick, setQuick] = useState(false);
   const [force, setForce] = useState(false);
@@ -252,7 +295,13 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
 
   const stocks = universe.data?.stocks ?? [];
   const sectors = useMemo(() => [...new Set(stocks.map((s) => s.sector).filter(Boolean))].sort(), [stocks]);
-  const visible = stocks.filter((s) => sector === "all" || s.sector === sector);
+  const visible = useMemo(
+    () => sortStocks(stocks.filter((s) => sector === "all" || s.sector === sector), sort),
+    [stocks, sector, sort],
+  );
+  // Same column flips direction; a new one starts biggest-first (A–Z for sector).
+  const onSort = (key: SortKey) =>
+    setSort((prev) => (prev.key === key ? { key, desc: !prev.desc } : { key, desc: key !== "sector" }));
   const busy = activeRun != null && (activeRun.status === "queued" || activeRun.status === "running");
 
   const toggle = (ticker: string) =>
@@ -270,7 +319,7 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
       {activeRun && <ActiveRun run={activeRun} onSelect={onSelect} />}
 
       <div className="space-y-3">
-        <BlockHeading title={universe.data ? `${universe.data.name} · by market cap` : "Universe"}>
+        <BlockHeading title={universe.data ? `${universe.data.name} · by ${SORT_LABEL[sort.key]}` : "Universe"}>
           <button className={btnGhost} onClick={() => refresh.mutate()} disabled={refresh.isPending}>
             <RefreshCw className={`h-3 w-3 ${refresh.isPending ? "animate-spin" : ""}`} />
             Refresh prices
@@ -361,9 +410,9 @@ export function RunPanel({ activeRun, onSelect }: { activeRun: Run | null; onSel
                   <th className="px-3 py-2 w-8" />
                   <th className="px-3 py-2 text-left font-medium">#</th>
                   <th className="px-3 py-2 text-left font-medium">Ticker</th>
-                  <th className="px-3 py-2 text-left font-medium hidden lg:table-cell">Sector</th>
-                  <th className="px-3 py-2 text-left font-medium hidden sm:table-cell">Mkt cap</th>
-                  <th className="px-3 py-2 text-left font-medium">Price</th>
+                  <SortHeader label="Sector" col="sector" sort={sort} onSort={onSort} className="px-3 py-2 text-left font-medium hidden lg:table-cell" />
+                  <SortHeader label="Mkt cap" col="market_cap" sort={sort} onSort={onSort} className="px-3 py-2 text-left font-medium hidden sm:table-cell" />
+                  <SortHeader label="Price" col="price" sort={sort} onSort={onSort} className="px-3 py-2 text-left font-medium" />
                   <th className="px-3 py-2 text-left font-medium hidden sm:table-cell">Day</th>
                   <th className="px-3 py-2 text-left font-medium hidden md:table-cell">Last rating</th>
                 </tr>
