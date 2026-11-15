@@ -153,8 +153,9 @@ export function Detail({ ticker, onBack }: { ticker: string; onBack: () => void 
             {data.warnings.map((w) => <li key={w}>{w}</li>)}
           </ul>
           <p className="text-muted-foreground">
-            The agents still produced a confident decision, but it rests on missing inputs. Re-run with Force re-run
-            (try a stronger quick model), or check these figures yourself.
+            The agents still produced a confident decision, but it rests on missing or wrong inputs. Analyse it again
+            from the Run tab; results with gaps are redone automatically, no Force re-run needed. If the same gap comes
+            back, try a stronger quick model or check the figures yourself.
           </p>
         </div>
       )}
