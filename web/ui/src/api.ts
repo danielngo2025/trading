@@ -115,6 +115,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface WatchSettings {
   enabled: boolean;
+  auto: boolean;
   interval_min: number;
   move_pct: number;
   max_reruns_per_day: number;
@@ -136,7 +137,7 @@ export interface WatchEvent {
   reason: string;
   prev_rating: Rating;
   new_rating: Rating | null;
-  status: "waiting" | "running" | "done" | "failed" | "skipped";
+  status: "triggered" | "waiting" | "running" | "done" | "failed" | "skipped";
   error?: string;
   seen: boolean;
 }
@@ -149,6 +150,7 @@ export interface Watch {
   unseen: number;
   last_check?: number;
   market_open: boolean;
+  suggestions: Record<string, { price: number; side: "above" | "below"; label: string }[]>;
 }
 
 const put = (body: unknown) => ({ method: "PUT", body: JSON.stringify(body) });
@@ -176,7 +178,9 @@ export const api = {
   watchSettings: (body: Partial<WatchSettings>) => request<WatchSettings>("/api/watch/settings", put(body)),
   watchLevels: (ticker: string, body: WatchLevel) =>
     request<Watch>(`/api/watch/levels/${encodeURIComponent(ticker)}`, put(body)),
-  watchSeen: () => request<{ ok: boolean }>("/api/watch/seen", { method: "POST" }),
+  watchSeen: (eventId?: string) =>
+    request<{ ok: boolean }>(`/api/watch/seen${eventId ? `?event_id=${eventId}` : ""}`, { method: "POST" }),
+  watchRerun: (eventId: string) => request<WatchEvent>(`/api/watch/events/${eventId}/rerun`, { method: "POST" }),
   watchCheck: () => request<{ ok: boolean }>("/api/watch/check", { method: "POST" }),
 };
 

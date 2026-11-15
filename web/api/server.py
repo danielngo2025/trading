@@ -48,6 +48,7 @@ class RunRequest(BaseModel):
 
 class WatchSettings(BaseModel):
     enabled: bool | None = None
+    auto: bool | None = None
     interval_min: int | None = Field(None, ge=5, le=240)
     move_pct: float | None = Field(None, gt=0, le=50)
     max_reruns_per_day: int | None = Field(None, ge=0, le=20)
@@ -140,9 +141,17 @@ def watch_levels(ticker: str, body: WatchLevels):
 
 
 @app.post("/api/watch/seen")
-def watch_seen():
-    watch.mark_seen()
+def watch_seen(event_id: str | None = None):
+    watch.mark_seen(event_id)
     return {"ok": True}
+
+
+@app.post("/api/watch/events/{event_id}/rerun")
+def watch_rerun(event_id: str):
+    event = watch.rerun(event_id)
+    if not event:
+        raise HTTPException(404, "Alert not found")
+    return event
 
 
 @app.post("/api/watch/check")

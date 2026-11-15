@@ -6,7 +6,7 @@ import { TabBar } from "./components/shared";
 import { Screen } from "./components/Screen";
 import { RunPanel } from "./components/RunPanel";
 import { History } from "./components/History";
-import { Alerts } from "./components/Alerts";
+import { AlertBanner, Alerts, useWatch } from "./components/Alerts";
 import { Detail } from "./components/Detail";
 
 type Tab = "screen" | "run" | "history" | "alerts";
@@ -44,8 +44,11 @@ export function App() {
     refetchInterval: (q) =>
       q.state.data?.runs.some((r) => r.status === "queued" || r.status === "running") ? 3000 : false,
   });
-  const watch = useQuery({ queryKey: queryKeys.watch, queryFn: api.watch, refetchInterval: 60_000 });
+  const watch = useWatch();
   const unseen = watch.data?.unseen ?? 0;
+  useEffect(() => {
+    document.title = unseen > 0 ? `(${unseen}) TradingAgents` : "TradingAgents";
+  }, [unseen]);
   const latest = runs.data?.runs[0] ?? null;
   const running = latest && (latest.status === "queued" || latest.status === "running") ? latest : null;
   const doneCount = latest?.items.filter((i) => i.status === "done").length ?? 0;
@@ -80,9 +83,10 @@ export function App() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-4">
+      <main className="max-w-6xl mx-auto px-4 py-4 space-y-4">
+        {watch.data && <AlertBanner watch={watch.data} onSelect={setTicker} />}
         {ticker ? (
-          <Detail ticker={ticker} onBack={() => setTicker(null)} />
+          <Detail ticker={ticker} onBack={() => setTicker(null)} onSelect={setTicker} />
         ) : (
           <div className="space-y-4">
             <TabBar

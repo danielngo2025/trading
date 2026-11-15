@@ -1,8 +1,7 @@
 """Price watcher: re-rates a stock when its price moves away from where it was last analysed."""
 
 import logging
-import subprocess
-import sys
+import re
 import threading
 import time
 import uuid
@@ -17,7 +16,8 @@ log = logging.getLogger(__name__)
 STATE = store.ROOT / "watch.json"
 TSX_TZ = ZoneInfo("America/Toronto")
 DEFAULT_SETTINGS = {
-    "enabled": True,
+    "enabled": True,  # check prices
+    "auto": True,  # re-run on a trigger; when off, the alert waits for a manual re-run
     "interval_min": 10,
     "move_pct": 5.0,
     "max_reruns_per_day": 3,
@@ -48,6 +48,7 @@ def get_state() -> dict:
     state["events"] = list(reversed(state["events"]))[:50]
     state["unseen"] = sum(1 for e in state["events"] if not e.get("seen"))
     state["market_open"] = market_open()
+    state["suggestions"] = _suggestions()
     return state
 
 
@@ -70,12 +71,56 @@ def set_levels(ticker: str, above: float | None, below: float | None) -> None:
         _save(state)
 
 
-def mark_seen() -> None:
+def mark_seen(event_id: str | None = None) -> None:
     with _lock:
         state = _load()
         for event in state["events"]:
-            event["seen"] = True
+            if event_id in (None, event["id"]):
+                event["seen"] = True
         _save(state)
+
+
+def rerun(event_id: str) -> dict | None:
+    with _lock:
+        state = _load()
+        event = next((e for e in state["events"] if e["id"] == event_id), None)
+        if event and event["status"] in ("triggered", "skipped", "failed"):
+            event.update(status="waiting", error=None, seen=True)
+            _save(state)
+    _wake.set()
+    return event
+
+
+# Price levels the decision itself names, offered as one-click alert levels.
+_LEVEL_WORDS = {"stop": "stop-loss", "support": "support", "entry": "entry", "pullback": "entry",
+                "accumulat": "entry", "re-entry": "entry", "resistance": "resistance", "target": "target",
+                "breakout": "breakout"}
+_LEVEL = re.compile(r"(" + "|".join(_LEVEL_WORDS) + r")[^$\n]{0,60}?\$\s?(\d[\d,]*(?:\.\d+)?)(?:\s?[–-]\s?\$?(\d[\d,]*(?:\.\d+)?))?",
+                    re.IGNORECASE)
+
+
+def suggested_levels(text: str, price: float) -> list[dict]:
+    found: dict[float, dict] = {}
+    for word, low, high in _LEVEL.findall(text or ""):
+        values = [float(v.replace(",", "")) for v in (low, high) if v]
+        side = "below" if values[0] < price else "above"
+        # A range is crossed at its near end: the top when falling into it, the bottom when rising.
+        value = max(values) if side == "below" else min(values)
+        # Far-off figures are usually debt or revenue; ones at today's price would fire on noise.
+        if not 0.01 <= abs(value / price - 1) <= 0.3 or value in found:
+            continue
+        found[value] = {"price": value, "side": side, "label": _LEVEL_WORDS[word.lower()]}
+    return sorted(found.values(), key=lambda s: -s["price"])[:6]
+
+
+def _suggestions() -> dict:
+    out = {}
+    for summary in store.latest_analyses():
+        price = (summary.get("quote") or {}).get("price")
+        full = store.get_analysis(summary["ticker"], summary["trade_date"]) or {}
+        if price:
+            out[summary["ticker"]] = suggested_levels((full.get("reports") or {}).get("final", ""), price)
+    return out
 
 
 def check_now() -> None:
@@ -93,12 +138,8 @@ def market_open(now: datetime | None = None) -> bool:
 
 
 def _notify(title: str, message: str) -> None:
+    # Alerts surface in the web UI from the events list; this is just the server log.
     log.info("%s — %s", title, message)
-    if sys.platform != "darwin":
-        return
-    esc = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')
-    script = f'display notification "{esc(message)}" with title "{esc(title)}" sound name "Glass"'
-    subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
 
 
 def _trigger_reason(price: float, base: float, move_pct: float, level: dict | None) -> str | None:
@@ -134,17 +175,19 @@ def _check_prices(state: dict) -> None:
         reason = _trigger_reason(price, base, settings["move_pct"], state["levels"].get(ticker))
         if not reason:
             continue
-        rerun = sum(1 for e in state["events"] if e["day"] == today and e["status"] != "skipped")
+        rerun = sum(1 for e in state["events"] if e["day"] == today and e["status"] not in ("skipped", "triggered"))
         capped = rerun >= settings["max_reruns_per_day"]
+        status = "triggered" if not settings["auto"] else "skipped" if capped else "waiting"
         state["events"].append({
             "id": uuid.uuid4().hex[:8], "ticker": ticker, "company": summary.get("company"),
             "at": time.time(), "day": today, "price": price, "base_price": base,
             "base_date": summary["trade_date"], "reason": reason, "prev_rating": summary["rating"],
-            "model": summary.get("model"), "status": "skipped" if capped else "waiting",
+            "model": summary.get("model"), "status": status,
             "run_id": None, "new_rating": None, "seen": False,
         })
         currency = (summary.get("quote") or {}).get("currency") or ""
-        tail = f"daily re-rate limit ({settings['max_reruns_per_day']}) reached" if capped else "re-rating now"
+        tail = {"triggered": "re-run it when ready", "waiting": "re-rating now",
+                "skipped": f"daily re-rate limit ({settings['max_reruns_per_day']}) reached"}[status]
         _notify(f"{ticker} {reason}", f"{price:.2f} {currency} (was {base:.2f}). Rated {summary['rating']} — {tail}.")
 
 
@@ -195,8 +238,7 @@ def _tick(last_check: float) -> float:
         if state.pop("force_check", False) or (settings["enabled"] and market_open() and due):
             _check_prices(state)
             state["last_check"] = last_check = time.time()
-        if settings["enabled"]:
-            _start_waiting(state)
+        _start_waiting(state)
         _save(state)
     return last_check
 

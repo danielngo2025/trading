@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { WatchPanel } from "./Alerts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowLeft } from "lucide-react";
@@ -78,7 +79,11 @@ function ReportSection({ section, reports }: { section: (typeof SECTIONS)[number
   );
 }
 
-export function Detail({ ticker, onBack }: { ticker: string; onBack: () => void }) {
+export function Detail({ ticker, onBack, onSelect }: {
+  ticker: string;
+  onBack: () => void;
+  onSelect: (ticker: string) => void;
+}) {
   const [date, setDate] = useState<string | undefined>();
   const [section, setSection] = useState<Section>("analysts");
   const { data, isLoading, error } = useQuery({
@@ -143,6 +148,10 @@ export function Detail({ ticker, onBack }: { ticker: string; onBack: () => void 
           </div>
         ))}
       </div>
+
+      {data.trade_date === data.dates[0] && (
+        <WatchPanel ticker={data.ticker} basePrice={data.quote.price} onSelect={onSelect} />
+      )}
 
       {data.warnings.length > 0 && (
         <div className="border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs space-y-1">
