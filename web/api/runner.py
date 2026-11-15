@@ -97,10 +97,11 @@ def _recent_fundamentals(ticker: str, trade_date: str) -> dict | None:
     for d in store.analysis_dates(ticker):
         age = (target - datetime.strptime(d, "%Y-%m-%d")).days
         if 0 <= age <= FUNDAMENTALS_MAX_AGE_DAYS:
-            text = ((store.get_analysis(ticker, d) or {}).get("reports") or {}).get("fundamentals")
-            # Don't carry a report forward that never had real figures in it.
-            if text and not any(w.startswith("Fundamentals") for w in data_warnings({"fundamentals": text})):
-                return {"date": d, "text": text}
+            source = store.get_analysis(ticker, d) or {}
+            reports = source.get("reports") or {}
+            # Don't carry forward a report from a run that had any data gap; it may rest on a wrong price.
+            if reports.get("fundamentals") and not data_warnings(reports, (source.get("quote") or {}).get("price")):
+                return {"date": d, "text": reports["fundamentals"]}
     return None
 
 

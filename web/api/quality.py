@@ -18,6 +18,20 @@ _PRICE = re.compile(r"(?:\$|\bCAD|\bC\$|\bUSD)\s*\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\
 PRICE_TOLERANCE = 0.05
 
 
+_STATED_PRICE = re.compile(
+    r"current (?:price|close)[^\d\n]{0,40}?(?:\$|\bCAD|\bC\$)\s*~?\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def _stated_price_mismatch(text: str, price: float) -> float | None:
+    for raw in _STATED_PRICE.findall(text):
+        value = float(raw.replace(",", ""))
+        if abs(value / price - 1) > PRICE_TOLERANCE:
+            return value
+    return None
+
+
 def _mentions_price(text: str, price: float) -> bool:
     for raw in _PRICE.findall(text):
         value = float(raw.replace(",", ""))
@@ -40,6 +54,11 @@ def data_warnings(reports: dict, price: float | None = None) -> list[str]:
     fundamentals = (reports.get("fundamentals") or "").lower()
     if fundamentals and not any(m in fundamentals for m in FUNDAMENTAL_MARKERS):
         warnings.append("Fundamentals report has no valuation or earnings figures")
+    if price:
+        for key, label in ANALYST_REPORTS.items():
+            wrong = _stated_price_mismatch(reports.get(key) or "", price)
+            if wrong is not None:
+                warnings.append(f"{label} report states the current price as {wrong:,.2f}, not {price:,.2f}")
     market = reports.get("market") or ""
     # A technical report that never quotes the real price was written from memory, not from data.
     if price and market and not _mentions_price(market, price):
