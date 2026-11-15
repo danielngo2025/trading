@@ -30,6 +30,24 @@ def _timed_node(name: str, node_fn):
     return wrapper
 
 
+MAX_TOOL_ROUNDS = 8
+
+
+def _private_tool_loop(analyst_node, tool_node):
+    """Run an analyst and its tools to completion, returning only its report fields."""
+    def run(state):
+        messages = list(state["messages"])
+        for _ in range(MAX_TOOL_ROUNDS):
+            result = analyst_node({**state, "messages": messages})
+            reply = result["messages"][-1]
+            messages.append(reply)
+            if not reply.tool_calls:
+                return {k: v for k, v in result.items() if k != "messages"}
+            messages.extend(tool_node.invoke({"messages": messages})["messages"])
+        raise RuntimeError(f"Analyst still requesting data after {MAX_TOOL_ROUNDS} tool rounds")
+    return run
+
+
 class GraphSetup:
     """Handles the setup and configuration of the agent graph."""
 
@@ -132,10 +150,13 @@ class GraphSetup:
         # Create workflow
         workflow = StateGraph(AgentState)
 
-        # Add analyst nodes to the graph (each with its own tool loop)
+        # Each analyst runs its tool loop on a private message list; parallel analysts sharing
+        # state["messages"] executed each other's tool calls and never saw their own data.
         for analyst_type, node in analyst_nodes.items():
-            workflow.add_node(f"{analyst_type.capitalize()} Analyst", node)
-            workflow.add_node(f"tools_{analyst_type}", tool_nodes[analyst_type])
+            workflow.add_node(
+                f"{analyst_type.capitalize()} Analyst",
+                _private_tool_loop(node, tool_nodes[analyst_type]),
+            )
 
         # Single message-clear node at the merge point (after all parallel
         # analysts converge). Per-analyst clears can't work in parallel
@@ -159,25 +180,10 @@ class GraphSetup:
         for analyst_type in selected_analysts:
             workflow.add_edge(START, f"{analyst_type.capitalize()} Analyst")
 
-        # Each analyst ends at its own Done node; a plain multi-edge into Msg Clear
-        # would fire once per analyst and re-run everything downstream.
-        done_nodes = []
-        for analyst_type in selected_analysts:
-            current_analyst = f"{analyst_type.capitalize()} Analyst"
-            current_tools = f"tools_{analyst_type}"
-            done_node = f"{current_analyst} Done"
-            workflow.add_node(done_node, lambda state: {})
-            done_nodes.append(done_node)
-
-            workflow.add_conditional_edges(
-                current_analyst,
-                getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
-                {current_tools: current_tools, "Msg Clear Analysts": done_node},
-            )
-            workflow.add_edge(current_tools, current_analyst)
-
         # Join: waits for every analyst before clearing messages once
-        workflow.add_edge(done_nodes, "Msg Clear Analysts")
+        workflow.add_edge(
+            [f"{a.capitalize()} Analyst" for a in selected_analysts], "Msg Clear Analysts"
+        )
 
         # Single merge point: clear messages → Bull Researcher
         workflow.add_edge("Msg Clear Analysts", "Bull Researcher")

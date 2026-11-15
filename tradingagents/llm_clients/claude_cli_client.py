@@ -58,7 +58,8 @@ def _build_tool_description(tools: Sequence[BaseTool]) -> str:
         "You have the following tools available. To call a tool, respond with "
         "a JSON block in this exact format:\n"
         '```tool_call\n{"name": "<tool_name>", "arguments": {<args>}}\n```\n'
-        "You may call multiple tools by including multiple such blocks.\n"
+        "You may call multiple tools by including multiple such blocks. After your tool_call blocks, stop: "
+        "the real results arrive in the next message. Never write tool results yourself.\n"
         "Available tools:"
     ]
     for tool in tools:
@@ -244,19 +245,8 @@ class ClaudeCLIChatModel(BaseChatModel):
         return response_text, usage
 
     def _finish(self, response_text: str, tool_calls: list, usage: dict) -> ChatResult:
-        if tool_calls:
-            clean_text = response_text
-            for marker in ("```tool_call",):
-                while marker in clean_text:
-                    start = clean_text.find(marker)
-                    end = clean_text.find("```", start + len(marker))
-                    if end != -1:
-                        clean_text = clean_text[:start] + clean_text[end + 3:]
-                    else:
-                        break
-            clean_text = clean_text.strip()
-        else:
-            clean_text = response_text
+        # The model often keeps going after its tool calls and invents the results; drop all of that.
+        clean_text = response_text[:response_text.find("```tool_call")].strip() if tool_calls else response_text
 
         input_tokens = sum(usage.get(k, 0) for k in _USAGE_KEYS[:3])
         output_tokens = usage.get("output_tokens", 0)
