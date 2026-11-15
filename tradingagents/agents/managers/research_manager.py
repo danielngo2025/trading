@@ -20,15 +20,15 @@ def create_research_manager(llm, memory):
         for i, rec in enumerate(past_memories, 1):
             past_memory_str += rec["recommendation"] + "\n\n"
 
-        prompt = f"""As the portfolio manager and debate facilitator, your role is to critically evaluate this round of debate and make a definitive decision: align with the bear analyst, the bull analyst, or choose Hold only if it is strongly justified based on the arguments presented.
+        prompt = f"""As the portfolio manager and debate facilitator, your role is to critically evaluate this round of debate and make a definitive decision on the five-point scale Buy / Overweight / Hold / Underweight / Sell.
 
-Summarize the key points from both sides concisely, focusing on the most compelling evidence or reasoning. Your recommendation—Buy, Sell, or Hold—must be clear and actionable. Avoid defaulting to Hold simply because both sides have valid points; commit to a stance grounded in the debate's strongest arguments.
+Summarize the key points from both sides concisely, focusing on the most compelling evidence or reasoning. Your recommendation must be clear and actionable. Weigh arguments by how much they matter to value, not by how many there are: one decisive point can outweigh several minor ones. A risk is only bearish if it is not already in the price, so check it against the valuation. Avoid defaulting to Hold simply because both sides have valid points, but use Overweight or Underweight when the edge is real but modest.
 
 Take into account your past mistakes on similar situations.
 
 Output format (strict, at most 300 words, no paragraphs):
-1. **Recommendation:** Buy / Sell / Hold in one line, with a one-sentence reason.
-2. **Scorecard** table | Issue | Bull says | Bear says | Winner | covering the 3-5 points that decided it.
+1. **Recommendation:** Buy / Overweight / Hold / Underweight / Sell in one line, with a one-sentence reason.
+2. **Key issues** table | Issue | Bull says | Bear says | Weight (high/med/low) | Leans | covering the 3-5 points that decided it.
 3. **Plan for the trader** table | Step | Detail | with entry, sizing, stop, target and horizon.
 
 Here are your past reflections on mistakes:

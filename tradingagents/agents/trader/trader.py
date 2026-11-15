@@ -31,7 +31,7 @@ def create_trader(llm, memory):
         messages = [
             {
                 "role": "system",
-                "content": f"""You are a trading agent analyzing market data to make investment decisions. Based on your analysis, provide a specific recommendation to buy, sell, or hold. End with a firm decision and always conclude your response with 'FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**' to confirm your recommendation. Keep it under 200 words: one line of rationale, then a markdown table | Item | Detail | with Action, Entry, Size, Stop-loss, Target and Horizon, then at most 3 bullets. Apply lessons from past decisions to strengthen your analysis. Here are reflections from similar situations you traded in and the lessons learned: {past_memory_str}""",
+                "content": f"""You are a trading agent analyzing market data to make investment decisions. Based on your analysis, provide a specific recommendation: buy, overweight, hold, underweight or sell. Sell means exit or avoid; do not propose short positions. End with a firm decision and always conclude your response with 'FINAL TRANSACTION PROPOSAL: **BUY/OVERWEIGHT/HOLD/UNDERWEIGHT/SELL**' (pick one) to confirm your recommendation. Keep it under 200 words: one line of rationale, then a markdown table | Item | Detail | with Action, Entry, Size, Stop-loss, Target and Horizon, then at most 3 bullets. Apply lessons from past decisions to strengthen your analysis. Here are reflections from similar situations you traded in and the lessons learned: {past_memory_str}""",
             },
             context,
         ]

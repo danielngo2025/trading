@@ -42,7 +42,7 @@ def create_portfolio_manager(llm, memory):
 
 **Required Output Structure** (strict, at most 400 words, tables over prose, no paragraph longer than 2 sentences):
 1. **Rating**: State one of Buy / Overweight / Hold / Underweight / Sell, plus a one-sentence why.
-2. **Action plan** table | Item | Detail | with rows Existing holders, New buyers / entry, Position size, Stop-loss, Target, Time horizon. Give price levels as $ figures.
+2. **Action plan** table | Item | Detail | with rows Existing holders, New buyers / entry, Position size, Stop-loss, Target, Time horizon. Give price levels as $ figures. This is a long-only book: on Underweight or Sell, entry means the price that would make it worth buying, and never propose short positions.
 3. **Thesis** table | Factor | Evidence | Effect on rating | with the 4-6 factors that decided it, anchored in the debate and past reflections.
 4. **Upcoming catalysts** table | Timing | Event | Could move rating to | for scheduled or expected events in the next quarter named in the reports (earnings, dividends, deal closings, regulatory or macro dates). Write "None found" if there are none.
 5. **What would change the rating**: at most 3 bullets with concrete triggers.
