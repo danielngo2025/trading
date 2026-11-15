@@ -1,5 +1,7 @@
 """Flags analyses whose agents worked from missing data, so a confident rating isn't taken at face value."""
 
+import re
+
 ANALYST_REPORTS = {"market": "Technical", "sentiment": "Sentiment", "news": "News", "fundamentals": "Fundamentals"}
 
 FAILURE_PHRASES = (
@@ -10,7 +12,21 @@ FAILURE_PHRASES = (
 FUNDAMENTAL_MARKERS = ("p/e", "pe ratio", "eps", "earnings per share", "revenue", "net income", "book value")
 
 
-def data_warnings(reports: dict) -> list[str]:
+# Only currency-marked numbers, so RSI or MACD readings near the price don't count as quoting it.
+_PRICE = re.compile(r"(?:\$|\bCAD|\bC\$|\bUSD)\s*\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
+# Saved quotes are taken when the run ends, which can be a session after the analysed close.
+PRICE_TOLERANCE = 0.05
+
+
+def _mentions_price(text: str, price: float) -> bool:
+    for raw in _PRICE.findall(text):
+        value = float(raw.replace(",", ""))
+        if abs(value / price - 1) <= PRICE_TOLERANCE:
+            return True
+    return False
+
+
+def data_warnings(reports: dict, price: float | None = None) -> list[str]:
     warnings = []
     for key, label in ANALYST_REPORTS.items():
         text = (reports.get(key) or "").strip()
@@ -24,4 +40,8 @@ def data_warnings(reports: dict) -> list[str]:
     fundamentals = (reports.get("fundamentals") or "").lower()
     if fundamentals and not any(m in fundamentals for m in FUNDAMENTAL_MARKERS):
         warnings.append("Fundamentals report has no valuation or earnings figures")
+    market = reports.get("market") or ""
+    # A technical report that never quotes the real price was written from memory, not from data.
+    if price and market and not _mentions_price(market, price):
+        warnings.append(f"Technical report never mentions the actual price ({price:,.2f}); its levels are unreliable")
     return warnings

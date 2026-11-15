@@ -47,6 +47,9 @@ def _messages_to_prompt(messages: List[BaseMessage]) -> str:
     return "\n\n".join(parts)
 
 
+_USAGE_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
+
+
 def _build_tool_description(tools: Sequence[BaseTool]) -> str:
     """Build a text description of available tools for the prompt."""
     if not tools:
@@ -163,6 +166,21 @@ class ClaudeCLIChatModel(BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs,
     ) -> ChatResult:
+        response_text, usage = self._call(messages)
+        tool_calls = _parse_tool_calls(response_text) if self._tools else []
+
+        # Analysts sometimes write the whole report from memory (stale prices, invented RSI) without fetching data.
+        fetched = any(isinstance(m, ToolMessage) for m in messages)
+        if self._tools and not fetched and not tool_calls:
+            response_text, retry_usage = self._call(messages, require_tools=True)
+            usage = {k: usage.get(k, 0) + retry_usage.get(k, 0) for k in _USAGE_KEYS}
+            tool_calls = _parse_tool_calls(response_text)
+            if not tool_calls:
+                raise RuntimeError("Analyst answered without fetching any data; refusing a report written from memory")
+
+        return self._finish(response_text, tool_calls, usage)
+
+    def _call(self, messages: List[BaseMessage], require_tools: bool = False) -> tuple[str, dict]:
         prompt = _messages_to_prompt(messages)
 
         if self._tools:
@@ -175,6 +193,11 @@ class ClaudeCLIChatModel(BaseChatModel):
             "Only use the tool_call format described above if you need to call "
             "the financial data tools listed."
         )
+        if require_tools:
+            prompt += (
+                "\n\nYou have not fetched any data yet. Do NOT write the report from memory: your knowledge "
+                "of prices and indicators is out of date. Respond now with only tool_call blocks for the data you need."
+            )
 
         args = [
             self.claude_command,
@@ -218,9 +241,9 @@ class ClaudeCLIChatModel(BaseChatModel):
             raise RuntimeError(f"Claude CLI error ({self.model}): {error or response_text[:300]}")
         if not response_text:
             response_text = stdout
+        return response_text, usage
 
-        tool_calls = _parse_tool_calls(response_text) if self._tools else []
-
+    def _finish(self, response_text: str, tool_calls: list, usage: dict) -> ChatResult:
         if tool_calls:
             clean_text = response_text
             for marker in ("```tool_call",):
@@ -235,8 +258,7 @@ class ClaudeCLIChatModel(BaseChatModel):
         else:
             clean_text = response_text
 
-        input_tokens = sum(usage.get(k, 0) for k in
-                           ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+        input_tokens = sum(usage.get(k, 0) for k in _USAGE_KEYS[:3])
         output_tokens = usage.get("output_tokens", 0)
         message = AIMessage(
             content=clean_text,

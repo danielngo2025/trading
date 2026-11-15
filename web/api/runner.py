@@ -199,7 +199,7 @@ def _execute(run_id: str) -> None:
             continue
         existing = None if run.get("force") else store.get_analysis(ticker, trade_date)
         # A result built on missing data isn't worth keeping; analyse it again.
-        if existing and not data_warnings(existing.get("reports") or {}):
+        if existing and not data_warnings(existing.get("reports") or {}, (existing.get("quote") or {}).get("price")):
             now = time.time()
             _update_item(run, ticker, status="done", stages_done=len(STAGES), rating=existing["rating"],
                          cached=True, tokens={"input": 0, "output": 0, "calls": 0}, started_at=now, finished_at=now)

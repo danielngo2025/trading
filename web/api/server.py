@@ -68,7 +68,7 @@ def analysis(ticker: str, date: str | None = None):
     found = store.get_analysis(ticker, date or dates[0])
     if not found:
         raise HTTPException(404, f"No analysis for {ticker} on {date}")
-    return {**found, "dates": dates, "warnings": data_warnings(found.get("reports") or {})}
+    return {**found, "dates": dates, "warnings": data_warnings(found.get("reports") or {}, (found.get("quote") or {}).get("price"))}
 
 
 @app.get("/api/runs")

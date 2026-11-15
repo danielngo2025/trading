@@ -60,7 +60,7 @@ def latest_analyses() -> list[dict]:
         full = get_analysis(folder.name, dates[0])
         if full:
             summary = {k: v for k, v in full.items() if k != "reports"}
-            summary["warnings"] = data_warnings(full.get("reports") or {})
+            summary["warnings"] = data_warnings(full.get("reports") or {}, (full.get("quote") or {}).get("price"))
             summary["history"] = [
                 {"trade_date": d, "rating": (get_analysis(folder.name, d) or {}).get("rating")}
                 for d in dates[:6]
