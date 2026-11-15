@@ -40,10 +40,12 @@ def create_portfolio_manager(llm, memory):
 - Trader's transaction proposal: **{trader_plan}**
 - Lessons from past decisions: **{past_memory_str}**
 
-**Required Output Structure:**
-1. **Rating**: State one of Buy / Overweight / Hold / Underweight / Sell.
-2. **Executive Summary**: A concise action plan covering entry strategy, position sizing, key risk levels, and time horizon.
-3. **Investment Thesis**: Detailed reasoning anchored in the analysts' debate and past reflections.
+**Required Output Structure** (strict, at most 400 words, tables over prose, no paragraph longer than 2 sentences):
+1. **Rating**: State one of Buy / Overweight / Hold / Underweight / Sell, plus a one-sentence why.
+2. **Action plan** table | Item | Detail | with rows Existing holders, New buyers / entry, Position size, Stop-loss, Target, Time horizon. Give price levels as $ figures.
+3. **Thesis** table | Factor | Evidence | Effect on rating | with the 4-6 factors that decided it, anchored in the debate and past reflections.
+4. **Upcoming catalysts** table | Timing | Event | Could move rating to | for scheduled or expected events in the next quarter named in the reports (earnings, dividends, deal closings, regulatory or macro dates). Write "None found" if there are none.
+5. **What would change the rating**: at most 3 bullets with concrete triggers.
 
 ---
 

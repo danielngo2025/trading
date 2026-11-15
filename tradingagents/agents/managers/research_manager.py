@@ -24,12 +24,12 @@ def create_research_manager(llm, memory):
 
 Summarize the key points from both sides concisely, focusing on the most compelling evidence or reasoning. Your recommendation—Buy, Sell, or Hold—must be clear and actionable. Avoid defaulting to Hold simply because both sides have valid points; commit to a stance grounded in the debate's strongest arguments.
 
-Additionally, develop a detailed investment plan for the trader. This should include:
+Take into account your past mistakes on similar situations.
 
-Your Recommendation: A decisive stance supported by the most convincing arguments.
-Rationale: An explanation of why these arguments lead to your conclusion.
-Strategic Actions: Concrete steps for implementing the recommendation.
-Take into account your past mistakes on similar situations. Use these insights to refine your decision-making and ensure you are learning and improving. Present your analysis conversationally, as if speaking naturally, without special formatting. 
+Output format (strict, at most 300 words, no paragraphs):
+1. **Recommendation:** Buy / Sell / Hold in one line, with a one-sentence reason.
+2. **Scorecard** table | Issue | Bull says | Bear says | Winner | covering the 3-5 points that decided it.
+3. **Plan for the trader** table | Step | Detail | with entry, sizing, stop, target and horizon.
 
 Here are your past reflections on mistakes:
 \"{past_memory_str}\"

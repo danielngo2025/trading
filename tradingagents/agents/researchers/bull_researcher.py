@@ -1,4 +1,4 @@
-
+from tradingagents.agents.utils.agent_utils import debate_format
 
 def create_bull_researcher(llm, memory):
     def bull_node(state) -> dict:
@@ -26,7 +26,6 @@ Key points to focus on:
 - Competitive Advantages: Emphasize factors like unique products, strong branding, or dominant market positioning.
 - Positive Indicators: Use financial health, industry trends, and recent positive news as evidence.
 - Bear Counterpoints: Critically analyze the bear argument with specific data and sound reasoning, addressing concerns thoroughly and showing why the bull perspective holds stronger merit.
-- Engagement: Present your argument in a conversational style, engaging directly with the bear analyst's points and debating effectively rather than just listing data.
 
 Resources available:
 Market research report: {market_research_report}
@@ -36,12 +35,12 @@ Company fundamentals report: {fundamentals_report}
 Conversation history of the debate: {history}
 Last bear argument: {current_response}
 Reflections from similar situations and lessons learned: {past_memory_str}
-Use this information to deliver a compelling bull argument, refute the bear's concerns, and engage in a dynamic debate that demonstrates the strengths of the bull position. You must also address reflections and learn from lessons and mistakes you made in the past.
-"""
+Use this information to deliver a compelling bull argument, refute the bear's concerns, and show the strengths of the bull position. You must also address reflections and learn from lessons and mistakes you made in the past.""" + debate_format(
+            200, "Point | Evidence | Why it beats the bear case")
 
         response = llm.invoke(prompt)
 
-        argument = f"Bull Analyst: {response.content}"
+        argument = f"Bull Analyst:\n\n{response.content}"
 
         new_investment_debate_state = {
             "history": history + "\n" + argument,

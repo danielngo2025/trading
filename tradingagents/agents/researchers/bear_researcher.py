@@ -1,4 +1,4 @@
-
+from tradingagents.agents.utils.agent_utils import debate_format
 
 def create_bear_researcher(llm, memory):
     def bear_node(state) -> dict:
@@ -27,7 +27,6 @@ Key points to focus on:
 - Competitive Weaknesses: Emphasize vulnerabilities such as weaker market positioning, declining innovation, or threats from competitors.
 - Negative Indicators: Use evidence from financial data, market trends, or recent adverse news to support your position.
 - Bull Counterpoints: Critically analyze the bull argument with specific data and sound reasoning, exposing weaknesses or over-optimistic assumptions.
-- Engagement: Present your argument in a conversational style, directly engaging with the bull analyst's points and debating effectively rather than simply listing facts.
 
 Resources available:
 
@@ -38,12 +37,12 @@ Company fundamentals report: {fundamentals_report}
 Conversation history of the debate: {history}
 Last bull argument: {current_response}
 Reflections from similar situations and lessons learned: {past_memory_str}
-Use this information to deliver a compelling bear argument, refute the bull's claims, and engage in a dynamic debate that demonstrates the risks and weaknesses of investing in the stock. You must also address reflections and learn from lessons and mistakes you made in the past.
-"""
+Use this information to deliver a compelling bear argument, refute the bull's claims, and show the risks and weaknesses of investing in the stock. You must also address reflections and learn from lessons and mistakes you made in the past.""" + debate_format(
+            200, "Point | Evidence | Why it beats the bull case")
 
         response = llm.invoke(prompt)
 
-        argument = f"Bear Analyst: {response.content}"
+        argument = f"Bear Analyst:\n\n{response.content}"
 
         new_investment_debate_state = {
             "history": history + "\n" + argument,

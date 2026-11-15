@@ -34,6 +34,15 @@ def get_language_instruction() -> str:
     return f" Write your entire response in {lang}."
 
 
+def debate_format(words: int, columns: str) -> str:
+    """Keeps debate turns short and scannable; readers skim tables, not essays."""
+    return (
+        f"\n\nFormat (strict): at most {words} words. No preamble, no restating the other side at length, no closing recap. "
+        f"Lead with a markdown table | {columns} | of your 3-5 strongest points, each with a specific figure. "
+        "Then at most 3 one-sentence bullets. No paragraphs."
+    )
+
+
 def build_instrument_context(ticker: str) -> str:
     """Describe the exact instrument so agents preserve exchange-qualified tickers."""
     return (
