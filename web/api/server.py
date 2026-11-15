@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from web.api import models, runner, store
+from web.api import models, runner, store, watch
 from web.api.quality import data_warnings
 from web.api.universe import get_universe
 
@@ -23,6 +23,7 @@ UI_DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     runner.start_worker()
+    watch.start_watcher()
     yield
 
 
@@ -43,6 +44,19 @@ class RunRequest(BaseModel):
     quick_model: str | None = None
     force: bool = False
     reuse_fundamentals: bool = True
+
+
+class WatchSettings(BaseModel):
+    enabled: bool | None = None
+    interval_min: int | None = Field(None, ge=5, le=240)
+    move_pct: float | None = Field(None, gt=0, le=50)
+    max_reruns_per_day: int | None = Field(None, ge=0, le=20)
+    quick: bool | None = None
+
+
+class WatchLevels(BaseModel):
+    above: float | None = Field(None, gt=0)
+    below: float | None = Field(None, gt=0)
 
 
 @app.get("/api/universe")
@@ -107,6 +121,34 @@ def cancel(run_id: str):
     if not found:
         raise HTTPException(404, "Run not found")
     return found
+
+
+@app.get("/api/watch")
+def watch_state():
+    return watch.get_state()
+
+
+@app.put("/api/watch/settings")
+def watch_settings(body: WatchSettings):
+    return watch.update_settings(body.model_dump(exclude_none=True))
+
+
+@app.put("/api/watch/levels/{ticker}")
+def watch_levels(ticker: str, body: WatchLevels):
+    watch.set_levels(ticker, body.above, body.below)
+    return watch.get_state()
+
+
+@app.post("/api/watch/seen")
+def watch_seen():
+    watch.mark_seen()
+    return {"ok": True}
+
+
+@app.post("/api/watch/check")
+def watch_check():
+    watch.check_now()
+    return {"ok": True}
 
 
 # Serve the built UI when present so one process is enough outside of dev.

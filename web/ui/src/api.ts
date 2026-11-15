@@ -113,6 +113,46 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export interface WatchSettings {
+  enabled: boolean;
+  interval_min: number;
+  move_pct: number;
+  max_reruns_per_day: number;
+  quick: boolean;
+}
+
+export interface WatchLevel {
+  above: number | null;
+  below: number | null;
+}
+
+export interface WatchEvent {
+  id: string;
+  ticker: string;
+  at: number;
+  price: number;
+  base_price: number;
+  base_date: string;
+  reason: string;
+  prev_rating: Rating;
+  new_rating: Rating | null;
+  status: "waiting" | "running" | "done" | "failed" | "skipped";
+  error?: string;
+  seen: boolean;
+}
+
+export interface Watch {
+  settings: WatchSettings;
+  levels: Record<string, WatchLevel>;
+  prices: Record<string, { price: number; at: number; base: number }>;
+  events: WatchEvent[];
+  unseen: number;
+  last_check?: number;
+  market_open: boolean;
+}
+
+const put = (body: unknown) => ({ method: "PUT", body: JSON.stringify(body) });
+
 export const api = {
   universe: (refresh = false) => request<Universe>(`/api/universe${refresh ? "?refresh=true" : ""}`),
   analyses: () => request<{ analyses: AnalysisSummary[] }>("/api/analyses"),
@@ -132,6 +172,12 @@ export const api = {
   }) =>
     request<Run>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   cancelRun: (id: string) => request<Run>(`/api/runs/${id}/cancel`, { method: "POST" }),
+  watch: () => request<Watch>("/api/watch"),
+  watchSettings: (body: Partial<WatchSettings>) => request<WatchSettings>("/api/watch/settings", put(body)),
+  watchLevels: (ticker: string, body: WatchLevel) =>
+    request<Watch>(`/api/watch/levels/${encodeURIComponent(ticker)}`, put(body)),
+  watchSeen: () => request<{ ok: boolean }>("/api/watch/seen", { method: "POST" }),
+  watchCheck: () => request<{ ok: boolean }>("/api/watch/check", { method: "POST" }),
 };
 
 export const queryKeys = {
@@ -140,4 +186,5 @@ export const queryKeys = {
   analysis: (ticker: string, date?: string) => ["analysis", ticker, date ?? "latest"] as const,
   runs: ["runs"] as const,
   models: ["models"] as const,
+  watch: ["watch"] as const,
 };

@@ -6,9 +6,10 @@ import { TabBar } from "./components/shared";
 import { Screen } from "./components/Screen";
 import { RunPanel } from "./components/RunPanel";
 import { History } from "./components/History";
+import { Alerts } from "./components/Alerts";
 import { Detail } from "./components/Detail";
 
-type Tab = "screen" | "run" | "history";
+type Tab = "screen" | "run" | "history" | "alerts";
 
 function useTheme() {
   const [dark, setDark] = useState(() => {
@@ -43,6 +44,8 @@ export function App() {
     refetchInterval: (q) =>
       q.state.data?.runs.some((r) => r.status === "queued" || r.status === "running") ? 3000 : false,
   });
+  const watch = useQuery({ queryKey: queryKeys.watch, queryFn: api.watch, refetchInterval: 60_000 });
+  const unseen = watch.data?.unseen ?? 0;
   const latest = runs.data?.runs[0] ?? null;
   const running = latest && (latest.status === "queued" || latest.status === "running") ? latest : null;
   const doneCount = latest?.items.filter((i) => i.status === "done").length ?? 0;
@@ -51,6 +54,12 @@ export function App() {
   useEffect(() => {
     qc.invalidateQueries({ queryKey: queryKeys.analyses });
   }, [doneCount, latest?.status, qc]);
+
+  // The watcher starts runs on its own; pick them up when it reports one in flight.
+  const watcherBusy = watch.data?.events.some((e) => e.status === "running") ?? false;
+  useEffect(() => {
+    qc.invalidateQueries({ queryKey: queryKeys.runs });
+  }, [watcherBusy, qc]);
 
   return (
     <div className="min-h-screen">
@@ -81,6 +90,12 @@ export function App() {
                 { value: "screen", label: "Screen" },
                 { value: "run", label: running ? <>Run <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" /></> : "Run" },
                 { value: "history", label: "History" },
+                {
+                  value: "alerts",
+                  label: unseen > 0 && tab !== "alerts"
+                    ? <>Alerts <span className="text-[10px] font-mono px-1 bg-blue-600 text-white">{unseen}</span></>
+                    : "Alerts",
+                },
               ]}
               value={tab}
               onChange={setTab}
@@ -88,6 +103,7 @@ export function App() {
             {tab === "screen" && <Screen onSelect={setTicker} />}
             {tab === "run" && <RunPanel activeRun={running ?? latest} onSelect={setTicker} />}
             {tab === "history" && <History runs={runs.data?.runs ?? []} onSelect={setTicker} />}
+            {tab === "alerts" && <Alerts onSelect={setTicker} />}
           </div>
         )}
       </main>

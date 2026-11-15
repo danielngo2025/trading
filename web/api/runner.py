@@ -121,7 +121,7 @@ def _update_item(run: dict, ticker: str, **fields) -> None:
 
 
 def _analyze(graph, counter: TokenCounter, run: dict, ticker: str, company: str | None,
-             reused_fundamentals: dict | None) -> None:
+             reused_fundamentals: dict | None, note: str | None = None) -> None:
     started = time.time()
     counter.reset()
     _update_item(run, ticker, status="running", stage=STAGES[0][0], started_at=started)
@@ -129,6 +129,8 @@ def _analyze(graph, counter: TokenCounter, run: dict, ticker: str, company: str 
     state = graph.propagator.create_initial_state(ticker, run["trade_date"])
     if reused_fundamentals:
         state["fundamentals_report"] = reused_fundamentals["text"]
+    if note:
+        state["messages"] = [("human", f"{ticker}\n\n{note}")]
     final = None
     for chunk in graph.graph.stream(state, **graph.propagator.get_graph_args()):
         final = chunk
@@ -157,6 +159,7 @@ def _analyze(graph, counter: TokenCounter, run: dict, ticker: str, company: str 
         "quote": _quote(ticker),
         "tokens": counter.snapshot(),
         "reused": {"fundamentals": reused_fundamentals["date"]} if reused_fundamentals else {},
+        "note": note,
         "reports": _extract_reports(final),
     }
     store.save_analysis(analysis)
@@ -208,7 +211,7 @@ def _execute(run_id: str) -> None:
             reuse = run.get("reuse_fundamentals") and not run.get("force")
             fundamentals = _recent_fundamentals(ticker, trade_date) if reuse else None
             analysts = [a for a in ALL_ANALYSTS if not (fundamentals and a == "fundamentals")]
-            _analyze(graph_for(analysts), counter, run, ticker, item.get("company"), fundamentals)
+            _analyze(graph_for(analysts), counter, run, ticker, item.get("company"), fundamentals, item.get("note"))
         except Exception as exc:
             log.exception("Analysis failed for %s", ticker)
             _update_item(run, ticker, status="failed", error=str(exc),
@@ -264,8 +267,9 @@ def create_run(tickers: list[dict], trade_date: str | None, quick: bool, provide
         "config": {k: config[k] for k in ("llm_provider", "deep_think_llm", "quick_think_llm",
                                           "max_debate_rounds", "max_risk_discuss_rounds",
                                           "skip_risk_debate")} | {"data_vendors": config["data_vendors"]},
-        "items": [{"ticker": t["ticker"], "company": t.get("company"), "status": "queued",
-                   "stage": None, "stages_done": 0} for t in tickers],
+        "items": [{"ticker": t["ticker"], "company": t.get("company"), "note": t.get("note"),
+                   "status": "queued", "stage": None, "stages_done": 0} for t in tickers],
+        "source": "watcher" if any(t.get("note") for t in tickers) else "user",
         "stages": [{"key": k, "label": label} for k, label, _ in STAGES],
     }
     store.save_run(run)
