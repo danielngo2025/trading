@@ -113,6 +113,11 @@ export function tokens(t: { input: number; output: number } | undefined | null):
   return total >= 1e6 ? `${(total / 1e6).toFixed(2)}M` : `${Math.round(total / 1000)}k`;
 }
 
+export function cost(usd: number | undefined | null): string {
+  if (usd == null) return "";
+  return usd < 0.01 && usd > 0 ? " · <$0.01" : ` · $${usd.toFixed(2)}`;
+}
+
 export function BlockHeading({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 flex-wrap">

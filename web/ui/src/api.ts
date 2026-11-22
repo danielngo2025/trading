@@ -24,6 +24,8 @@ export interface Tokens {
   input: number;
   output: number;
   calls: number;
+  // Only providers that report it (claude-cli); list price, not a charge there.
+  cost_usd?: number;
 }
 
 export interface ModelOption {

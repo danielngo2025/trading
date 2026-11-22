@@ -77,19 +77,24 @@ class TokenCounter(BaseCallbackHandler):
     def reset(self):
         with self._lock:
             self.input = self.output = self.calls = 0
+            self.cost_usd = 0.0
 
     def on_llm_end(self, response, **kwargs):
         for gens in response.generations:
             for gen in gens:
-                usage = getattr(getattr(gen, "message", None), "usage_metadata", None) or {}
+                message = getattr(gen, "message", None)
+                usage = getattr(message, "usage_metadata", None) or {}
+                cost = (getattr(message, "response_metadata", None) or {}).get("cost_usd", 0)
                 with self._lock:
                     self.input += usage.get("input_tokens", 0)
                     self.output += usage.get("output_tokens", 0)
                     self.calls += 1
+                    self.cost_usd += cost
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {"input": self.input, "output": self.output, "calls": self.calls}
+            return {"input": self.input, "output": self.output, "calls": self.calls,
+                    "cost_usd": round(self.cost_usd, 4)}
 
 
 def _recent_fundamentals(ticker: str, trade_date: str) -> dict | None:

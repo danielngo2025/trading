@@ -11,6 +11,7 @@ import {
   btnGhost,
   btnPrimary,
   changeColor,
+  cost,
   duration,
   marketCap,
   price,
@@ -152,8 +153,13 @@ function StageBar({ run, done, running }: { run: Run; done: number; running: boo
 
 function totalTokens(run: Run) {
   return run.items.reduce(
-    (sum, i) => ({ input: sum.input + (i.tokens?.input ?? 0), output: sum.output + (i.tokens?.output ?? 0) }),
-    { input: 0, output: 0 },
+    (sum, i) => ({
+      input: sum.input + (i.tokens?.input ?? 0),
+      output: sum.output + (i.tokens?.output ?? 0),
+      // Stays undefined when no item reports a cost, so older runs show no dollar figure.
+      cost_usd: i.tokens?.cost_usd == null ? sum.cost_usd : (sum.cost_usd ?? 0) + i.tokens.cost_usd,
+    }),
+    { input: 0, output: 0, cost_usd: undefined as number | undefined },
   );
 }
 
@@ -175,7 +181,7 @@ export function ActiveRun({ run, onSelect }: { run: Run; onSelect: (ticker: stri
           {run.quick && <span className="text-[10px] font-mono text-muted-foreground ml-2">QUICK</span>}
         </span>
         <span className="text-xs text-muted-foreground font-mono tabular-nums">
-          {finished}/{run.items.length} done · {tokens(totalTokens(run))} tok
+          {finished}/{run.items.length} done · {tokens(totalTokens(run))} tok{cost(totalTokens(run).cost_usd)}
         </span>
         <span className="text-[10px] text-muted-foreground font-mono hidden md:inline">
           {run.config.deep_think_llm}

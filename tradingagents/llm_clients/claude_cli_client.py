@@ -131,7 +131,9 @@ def _parse_stream_json(stdout: str) -> tuple[str, dict, str | None]:
 
         elif etype == "result":
             result_text = event.get("result", "")
-            usage = event.get("usage") or {}
+            usage = dict(event.get("usage") or {})
+            # List-price cost; on claude-cli this is subscription usage, not a charge.
+            usage["cost_usd"] = event.get("total_cost_usd") or 0
             if event.get("is_error"):
                 error = result_text or event.get("subtype", "unknown error")
 
@@ -175,7 +177,7 @@ class ClaudeCLIChatModel(BaseChatModel):
 
         if first_turn and not tool_calls:
             response_text, retry_usage = self._call(messages, require_tools=True)
-            usage = {k: usage.get(k, 0) + retry_usage.get(k, 0) for k in _USAGE_KEYS}
+            usage = {k: usage.get(k, 0) + retry_usage.get(k, 0) for k in (*_USAGE_KEYS, "cost_usd")}
             tool_calls = _parse_tool_calls(response_text)
             if not tool_calls:
                 raise RuntimeError("Analyst answered without fetching any data; refusing a report written from memory")
@@ -256,6 +258,7 @@ class ClaudeCLIChatModel(BaseChatModel):
             tool_calls=tool_calls,
             usage_metadata={"input_tokens": input_tokens, "output_tokens": output_tokens,
                             "total_tokens": input_tokens + output_tokens},
+            response_metadata={"cost_usd": usage.get("cost_usd", 0)},
         )
 
         return ChatResult(generations=[ChatGeneration(message=message)])
