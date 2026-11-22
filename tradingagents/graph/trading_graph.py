@@ -101,7 +101,9 @@ class TradingAgentsGraph:
                 base_url=self.config.get("backend_url"),
                 **llm_kwargs,
             ).get_llm()
-        
+            if not self.config.get("analyst_thinking", True) and hasattr(self.analyst_llm, "thinking"):
+                self.analyst_llm = self.analyst_llm.model_copy(update={"thinking": False})
+
         # Initialize memories
         self.bull_memory = FinancialSituationMemory("bull_memory", self.config)
         self.bear_memory = FinancialSituationMemory("bear_memory", self.config)
