@@ -64,6 +64,11 @@ def _normalize_rating(text: str) -> str:
     return match.group(1) if match else "UNKNOWN"
 
 
+def _long_term_rating(report: str) -> str | None:
+    # The prompt pins the rating to the first line, so later mentions of other ratings don't count.
+    return _normalize_rating(report.strip().splitlines()[0]) if report.strip() else None
+
+
 def _extract_reports(state: dict) -> dict:
     debate = state.get("investment_debate_state") or {}
     risk = state.get("risk_debate_state") or {}
@@ -80,6 +85,7 @@ def _extract_reports(state: dict) -> dict:
         "conservative": risk.get("conservative_history", ""),
         "neutral": risk.get("neutral_history", ""),
         "final": state.get("final_trade_decision", ""),
+        "value": state.get("value_investor_report", ""),
     }
 
 
@@ -183,6 +189,7 @@ def _analyze(graph, counter: TokenCounter, run: dict, ticker: str, company: str 
         "company": company,
         "trade_date": final["trade_date"],
         "rating": _normalize_rating(raw_rating),
+        "value_rating": _long_term_rating(final.get("value_investor_report", "")),
         "run_id": run["id"],
         "created_at": time.time(),
         "duration_s": round(time.time() - started),

@@ -46,6 +46,12 @@ function Row({ a, onSelect }: { a: AnalysisSummary; onSelect: (ticker: string) =
       <td className="px-3 py-2">
         <div className="flex items-center gap-1.5">
           <RatingBadge rating={a.rating} />
+          {a.value_rating && (
+            <span title="Long-term (value investor) rating" className="inline-flex items-center gap-1">
+              <span className="text-[10px] font-mono text-muted-foreground">LT</span>
+              <RatingBadge rating={a.value_rating} />
+            </span>
+          )}
           {a.warnings.length > 0 && (
             <span title={`Data gaps:\n${a.warnings.join("\n")}`} className="text-destructive inline-flex">
               <AlertTriangle className="h-3.5 w-3.5" />
