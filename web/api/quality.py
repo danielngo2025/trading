@@ -24,7 +24,9 @@ PRICE_TOLERANCE = 0.05
 
 
 _STATED_PRICE = re.compile(
-    r"current (?:price|close)[^\d\n]{0,40}?(?:\$|\bCAD|\bC\$)\s*~?\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)",
+    r"current (?:price|close)[^\d\n]{0,40}?(?:\$|\bCAD|\bC\$)\s*~?\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+    # Skip distances such as "current price $7.94 below" the upper band.
+    r"(?!\d|[.,]\d)(?!\s*(?:below|above|under|over|higher|lower|away|from|points|%))",
     re.IGNORECASE,
 )
 
