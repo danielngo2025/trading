@@ -13,13 +13,14 @@ def get_YFin_data_online(
 ):
 
     datetime.strptime(start_date, "%Y-%m-%d")
-    datetime.strptime(end_date, "%Y-%m-%d")
+    # yfinance's end is exclusive; without the extra day the trade date's own bar is missing.
+    end_exclusive = (datetime.strptime(end_date, "%Y-%m-%d") + relativedelta(days=1)).strftime("%Y-%m-%d")
 
     # Create ticker object
     ticker = yf.Ticker(symbol.upper())
 
     # Fetch historical data for the specified date range
-    data = yf_retry(lambda: ticker.history(start=start_date, end=end_date))
+    data = yf_retry(lambda: ticker.history(start=start_date, end=end_exclusive))
 
     # Check if data is empty
     if data.empty:
