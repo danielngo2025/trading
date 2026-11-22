@@ -20,6 +20,15 @@ from tradingagents.agents.utils.news_data_tools import (
 )
 
 
+ANALYST_REPORT_MAX_WORDS = 1000
+
+
+def report_length_instruction() -> str:
+    # Output length dominates run time (~50 tokens/s), and long reports also bloat every debate prompt.
+    return (f" Keep the report under {ANALYST_REPORT_MAX_WORDS} words, table included: lead with what matters"
+            " for a trade decision and skip generic background.")
+
+
 def get_language_instruction() -> str:
     """Return a prompt instruction for the configured output language.
 
