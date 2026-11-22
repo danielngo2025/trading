@@ -55,13 +55,15 @@ export interface Models {
 export type ReportKey =
   | "market" | "sentiment" | "news" | "fundamentals"
   | "bull" | "bear" | "research_manager" | "trader"
-  | "aggressive" | "conservative" | "neutral" | "final";
+  | "aggressive" | "conservative" | "neutral" | "final" | "value";
 
 export interface AnalysisSummary {
   ticker: string;
   company: string | null;
   trade_date: string;
   rating: Rating;
+  // Long-term owner's view; absent on analyses made before it existed.
+  value_rating?: Rating | null;
   run_id: string;
   created_at: number;
   duration_s: number;

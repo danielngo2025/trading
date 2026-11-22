@@ -23,7 +23,7 @@ import {
   tokens,
 } from "./shared";
 
-type Section = "analysts" | "research" | "trader" | "risk";
+type Section = "analysts" | "research" | "trader" | "risk" | "value";
 
 const SECTIONS: { value: Section; label: string; reports: { key: ReportKey; label: string }[] }[] = [
   {
@@ -55,6 +55,7 @@ const SECTIONS: { value: Section; label: string; reports: { key: ReportKey; labe
       { key: "aggressive", label: "Aggressive" },
     ],
   },
+  { value: "value", label: "Long-term view", reports: [{ key: "value", label: "Value investor" }] },
 ];
 
 function Markdown({ text }: { text: string }) {
@@ -129,6 +130,11 @@ export function Detail({ ticker, onBack, onSelect }: {
         <h2 className="font-mono text-xl font-medium">{data.ticker}</h2>
         <span className="text-sm text-muted-foreground">{data.company}</span>
         <RatingBadge rating={data.rating} />
+        {data.value_rating && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+            Long-term <RatingBadge rating={data.value_rating} />
+          </span>
+        )}
         <div className="flex-1" />
         {data.dates.length > 1 && (
           <select

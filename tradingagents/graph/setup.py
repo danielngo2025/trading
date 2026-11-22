@@ -72,6 +72,30 @@ def _merge_risk_opening(state, results):
     }}
 
 
+class _Background:
+    """Run a node beside the graph: LangGraph steps in lockstep, so a slow parallel node would stall every branch."""
+
+    def __init__(self, node_fn):
+        self.node_fn = node_fn
+        self.pool = ThreadPoolExecutor(max_workers=1)
+        self.pending = {}
+
+    @staticmethod
+    def _key(state):
+        return state["company_of_interest"], state["trade_date"]
+
+    def start(self, state):
+        self.pending[self._key(state)] = self.pool.submit(self.node_fn, state)
+        return {}
+
+    def joined(self, node_fn):
+        def run(state):
+            result = node_fn(state)
+            future = self.pending.pop(self._key(state), None)
+            return {**result, **(future.result() if future else {})}
+        return run
+
+
 MAX_TOOL_ROUNDS = 8
 
 
@@ -212,7 +236,9 @@ class GraphSetup:
         workflow.add_node("Bear Researcher", bear_researcher_node)
         workflow.add_node("Research Manager", research_manager_node)
         workflow.add_node("Trader", trader_node)
-        workflow.add_node("Portfolio Manager", portfolio_manager_node)
+        value_investor = _Background(_timed_node("Value Investor", create_value_investor(self.deep_thinking_llm)))
+        workflow.add_node("Start Value Investor", value_investor.start)
+        workflow.add_node("Portfolio Manager", value_investor.joined(portfolio_manager_node))
 
         # Opening rounds run concurrently; any further rounds alternate speakers as before.
         workflow.add_node("Research Debate Opening", _parallel_opening(
@@ -236,6 +262,9 @@ class GraphSetup:
         )
 
         workflow.add_edge("Msg Clear Analysts", "Research Debate Opening")
+        # Needs only the analyst reports; its result is collected by the Portfolio Manager.
+        workflow.add_edge("Msg Clear Analysts", "Start Value Investor")
+        workflow.add_edge("Start Value Investor", END)
         workflow.add_conditional_edges(
             "Research Debate Opening",
             self.conditional_logic.should_continue_debate,
