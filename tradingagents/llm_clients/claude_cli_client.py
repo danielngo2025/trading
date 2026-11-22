@@ -145,6 +145,8 @@ class ClaudeCLIChatModel(BaseChatModel):
     model: str = "claude-sonnet-4-6"
     claude_command: str = "claude"
     timeout_sec: int = 300
+    # The CLI thinks by default; hidden thinking was ~80% of output tokens on data-summary calls.
+    thinking: bool = True
     _tools: List[BaseTool] = []
 
     class Config:
@@ -223,7 +225,7 @@ class ClaudeCLIChatModel(BaseChatModel):
                 capture_output=True,
                 text=True,
                 timeout=self.timeout_sec,
-                env=_clean_env(),
+                env=_clean_env() | ({} if self.thinking else {"MAX_THINKING_TOKENS": "0"}),
             )
         except subprocess.TimeoutExpired:
             raise TimeoutError(
