@@ -167,12 +167,13 @@ class ClaudeCLIChatModel(BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs,
     ) -> ChatResult:
-        response_text, usage = self._call(messages)
+        # Before any data arrives, ask for tool calls only: otherwise the model also writes a
+        # from-memory report after them (~60-100s of output) that _finish throws away.
+        first_turn = bool(self._tools) and not any(isinstance(m, ToolMessage) for m in messages)
+        response_text, usage = self._call(messages, require_tools=first_turn)
         tool_calls = _parse_tool_calls(response_text) if self._tools else []
 
-        # Analysts sometimes write the whole report from memory (stale prices, invented RSI) without fetching data.
-        fetched = any(isinstance(m, ToolMessage) for m in messages)
-        if self._tools and not fetched and not tool_calls:
+        if first_turn and not tool_calls:
             response_text, retry_usage = self._call(messages, require_tools=True)
             usage = {k: usage.get(k, 0) + retry_usage.get(k, 0) for k in _USAGE_KEYS}
             tool_calls = _parse_tool_calls(response_text)
@@ -197,7 +198,7 @@ class ClaudeCLIChatModel(BaseChatModel):
         if require_tools:
             prompt += (
                 "\n\nYou have not fetched any data yet. Do NOT write the report from memory: your knowledge "
-                "of prices and indicators is out of date. Respond now with only tool_call blocks for the data you need."
+                "of prices and indicators is out of date. Respond now with only tool_call blocks, requesting all the data you need in one go."
             )
 
         args = [
