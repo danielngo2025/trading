@@ -14,6 +14,7 @@ import {
   Skeleton,
   TabBar,
   changeColor,
+  cost,
   daysSince,
   duration,
   marketCap,
@@ -110,7 +111,7 @@ export function Detail({ ticker, onBack, onSelect }: {
     { label: "Took", value: duration(data.duration_s) },
     {
       label: "Tokens",
-      value: data.tokens ? `${tokens(data.tokens)} · ${data.tokens.calls} calls` : "—",
+      value: data.tokens ? `${tokens(data.tokens)} · ${data.tokens.calls} calls${cost(data.tokens.cost_usd)}` : "—",
     },
     {
       label: "Model",
