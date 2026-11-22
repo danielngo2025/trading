@@ -124,8 +124,8 @@ function ModelPicker({ models, value, onChange }: { models: Models; value: Model
         </select>
       </label>
       <label className="bg-background px-3 py-2 space-y-1">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground" title="Analysts, researchers, trader, risk debaters — most of the calls">
-          Quick model · most calls
+        <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground" title="Bull and bear researchers, trader and risk debaters. The four data analysts always use Haiku.">
+          Quick model · debate &amp; trader
         </div>
         <select value={value.quick} onChange={(e) => onChange({ ...value, quick: e.target.value })} className={`${selectClass} w-full`}>
           {provider?.quick.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
