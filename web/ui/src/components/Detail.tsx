@@ -5,7 +5,7 @@ import { MarketPanel } from "./Charts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowLeft } from "lucide-react";
-import { api, queryKeys, type ReportKey } from "../api";
+import { api, queryKeys, type PhaseTiming, type ReportKey } from "../api";
 import {
   BlockHeading,
   Notice,
@@ -152,6 +152,8 @@ export function Detail({ ticker, onBack, onSelect }: {
         ))}
       </div>
 
+      {data.timings && data.timings.length > 0 && <TimeBreakdown timings={data.timings} />}
+
       {data.trade_date === data.dates[0] && (
         <WatchPanel ticker={data.ticker} basePrice={data.quote.price} onSelect={onSelect} />
       )}
@@ -201,6 +203,30 @@ export function Detail({ ticker, onBack, onSelect }: {
         />
         <ReportSection key={`${section}-${data.trade_date}`} section={active} reports={data.reports} />
       </div>
+    </div>
+  );
+}
+
+function TimeBreakdown({ timings }: { timings: PhaseTiming[] }) {
+  const total = timings.reduce((sum, t) => sum + t.seconds, 0) || 1;
+  const longest = Math.max(...timings.map((t) => t.seconds));
+  return (
+    <div className="border border-border px-3 py-2 space-y-1">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">Time breakdown</div>
+      {timings.map((t) => (
+        <div key={t.key} className="flex items-center gap-3 text-xs">
+          <span className="w-32 shrink-0 truncate">{t.label}</span>
+          <div className="flex-1 h-2 bg-muted">
+            <div
+              className={t.seconds === longest ? "h-full bg-primary" : "h-full bg-muted-foreground/40"}
+              style={{ width: `${(t.seconds / total) * 100}%` }}
+            />
+          </div>
+          <span className="w-20 shrink-0 text-right font-mono tabular-nums text-muted-foreground">
+            {duration(Math.round(t.seconds))} · {Math.round((t.seconds / total) * 100)}%
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
