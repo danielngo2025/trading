@@ -31,6 +31,27 @@ STAGES = [
     ("risk", "Risk & portfolio manager", lambda s: s.get("final_trade_decision")),
 ]
 
+# Timing phases, in graph order. Parallel nodes land in one streamed update, so analysts are one phase.
+PHASES = [
+    ("analysts", "Analysts", lambda s: all(s.get(k) for k in
+                                           ("market_report", "sentiment_report", "news_report", "fundamentals_report"))),
+    ("debate", "Bull/bear debate", lambda s: (s.get("investment_debate_state") or {}).get("count", 0) > 0),
+    ("research_manager", "Research manager", lambda s: (s.get("investment_debate_state") or {}).get("judge_decision")),
+    ("trader", "Trader", lambda s: s.get("trader_investment_plan")),
+    ("risk", "Risk debate", lambda s: (s.get("risk_debate_state") or {}).get("count", 0) > 0),
+    ("portfolio_manager", "Portfolio manager", lambda s: s.get("final_trade_decision")),
+]
+
+
+def _phase_timings(started: float, marks: dict[str, float]) -> list[dict]:
+    timings, prev = [], started
+    for key, label in [(k, label) for k, label, _ in PHASES] + [("rating", "Rating extraction")]:
+        if key in marks:
+            timings.append({"key": key, "label": label, "seconds": round(marks[key] - prev, 1)})
+            prev = marks[key]
+    return timings
+
+
 _queue: "queue.Queue[str]" = queue.Queue()
 _run_lock = threading.Lock()
 # Kept in memory because the worker's own run copy is what gets saved on every progress tick.
@@ -138,8 +159,12 @@ def _analyze(graph, counter: TokenCounter, run: dict, ticker: str, company: str 
     if note:
         state["messages"] = [("human", f"{ticker}\n\n{note}")]
     final = None
+    marks: dict[str, float] = {}
     for chunk in graph.graph.stream(state, **graph.propagator.get_graph_args()):
         final = chunk
+        for key, _, done in PHASES:
+            if key not in marks and done(chunk):
+                marks[key] = time.time()
         done = sum(1 for _, _, has in STAGES if has(chunk))
         stage = STAGES[min(done, len(STAGES) - 1)][0]
         _update_item(run, ticker, stage=stage, stages_done=done, tokens=counter.snapshot())
@@ -151,6 +176,7 @@ def _analyze(graph, counter: TokenCounter, run: dict, ticker: str, company: str 
     graph.curr_state = final
     graph._log_state(final["trade_date"], final)
     raw_rating = graph.process_signal(final["final_trade_decision"])
+    marks["rating"] = time.time()
 
     analysis = {
         "ticker": ticker,
@@ -165,6 +191,7 @@ def _analyze(graph, counter: TokenCounter, run: dict, ticker: str, company: str 
                   "analyst": getattr(graph.analyst_llm, "model", None) or run["config"]["quick_think_llm"]},
         "quote": _quote(ticker),
         "tokens": counter.snapshot(),
+        "timings": _phase_timings(started, marks),
         "reused": {"fundamentals": reused_fundamentals["date"]} if reused_fundamentals else {},
         "note": note,
         "reports": _extract_reports(final),

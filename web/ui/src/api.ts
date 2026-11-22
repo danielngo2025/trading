@@ -20,6 +20,12 @@ export interface Universe {
   stocks: UniverseStock[];
 }
 
+export interface PhaseTiming {
+  key: string;
+  label: string;
+  seconds: number;
+}
+
 export interface Tokens {
   input: number;
   output: number;
@@ -62,6 +68,7 @@ export interface AnalysisSummary {
   model: { provider: string; deep: string; quick: string; analyst?: string };
   quote: Quote;
   tokens?: Tokens;
+  timings?: PhaseTiming[];
   reused?: { fundamentals?: string };
   warnings: string[];
   history: { trade_date: string; rating: Rating | null }[];
