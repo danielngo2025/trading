@@ -114,7 +114,8 @@ export function Detail({ ticker, onBack, onSelect }: {
     },
     {
       label: "Model",
-      value: data.model.quick === data.model.deep ? data.model.deep : `${data.model.deep} / ${data.model.quick}`,
+      // Older analyses predate the separate analyst model.
+      value: [...new Set([data.model.deep, data.model.quick, data.model.analyst ?? data.model.quick])].join(" / "),
     },
   ];
   const active = SECTIONS.find((s) => s.value === section)!;

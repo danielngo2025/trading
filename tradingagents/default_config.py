@@ -11,6 +11,8 @@ DEFAULT_CONFIG = {
     "llm_provider": "claude-cli",
     "deep_think_llm": "claude-sonnet-4-6",
     "quick_think_llm": "claude-sonnet-4-6",
+    # The 4 data analysts; Haiku writes ~2-3x faster. Claude providers only, others use quick_think_llm.
+    "analyst_llm": "claude-haiku-4-5",
     "backend_url": None,
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.

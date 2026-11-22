@@ -93,6 +93,14 @@ class TradingAgentsGraph:
 
         self.deep_thinking_llm = deep_client.get_llm()
         self.quick_thinking_llm = quick_client.get_llm()
+        self.analyst_llm = self.quick_thinking_llm
+        if self.config.get("analyst_llm") and self.config["llm_provider"].lower() in ("claude-cli", "anthropic"):
+            self.analyst_llm = create_llm_client(
+                provider=self.config["llm_provider"],
+                model=self.config["analyst_llm"],
+                base_url=self.config.get("backend_url"),
+                **llm_kwargs,
+            ).get_llm()
         
         # Initialize memories
         self.bull_memory = FinancialSituationMemory("bull_memory", self.config)
@@ -112,6 +120,7 @@ class TradingAgentsGraph:
         self.graph_setup = GraphSetup(
             self.quick_thinking_llm,
             self.deep_thinking_llm,
+            self.analyst_llm,
             self.tool_nodes,
             self.bull_memory,
             self.bear_memory,

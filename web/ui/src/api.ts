@@ -57,7 +57,7 @@ export interface AnalysisSummary {
   run_id: string;
   created_at: number;
   duration_s: number;
-  model: { provider: string; deep: string; quick: string };
+  model: { provider: string; deep: string; quick: string; analyst?: string };
   quote: Quote;
   tokens?: Tokens;
   reused?: { fundamentals?: string };
