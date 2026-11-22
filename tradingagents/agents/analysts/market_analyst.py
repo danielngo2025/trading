@@ -1,5 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from tradingagents.agents.utils.agent_utils import (
+    report_length_instruction,
     build_instrument_context,
     get_indicators,
     get_language_instruction,
@@ -31,8 +32,9 @@ def create_market_analyst(llm):
 Steps:
 1. First call get_stock_data to retrieve the price CSV.
 2. Then call get_indicators for each of the 5 indicators above. Use the exact names shown (rsi, macd, close_50_sma, boll_ub, boll_lb). Call all 5 — no more, no less.
-3. After receiving all indicator data, write a detailed report analyzing the trends, with specific actionable insights and supporting evidence."""
+3. After receiving all indicator data, write a focused report analyzing the trends, with specific actionable insights and supporting evidence."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+            + report_length_instruction()
             + get_language_instruction()
         )
 
