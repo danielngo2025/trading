@@ -14,6 +14,11 @@ FUNDAMENTAL_MARKERS = ("p/e", "pe ratio", "eps", "earnings per share", "revenue"
 
 # Only currency-marked numbers, so RSI or MACD readings near the price don't count as quoting it.
 _PRICE = re.compile(r"(?:\$|\bCAD|\bC\$|\bUSD)\s*\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
+# Prices the report labels as such, written without a currency marker ("Price: 32.50", "trades at 32.50").
+_LABELLED_PRICE = re.compile(
+    r"\b(?:price|close|closed at|trading at|trades at)\b[^\d\n]{0,20}?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
 # Saved quotes are taken when the run ends, which can be a session after the analysed close.
 PRICE_TOLERANCE = 0.05
 
@@ -33,7 +38,7 @@ def _stated_price_mismatch(text: str, price: float) -> float | None:
 
 
 def _mentions_price(text: str, price: float) -> bool:
-    for raw in _PRICE.findall(text):
+    for raw in _PRICE.findall(text) + _LABELLED_PRICE.findall(text):
         value = float(raw.replace(",", ""))
         if abs(value / price - 1) <= PRICE_TOLERANCE:
             return True
