@@ -1,6 +1,7 @@
 # TradingAgents/graph/setup.py
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -28,6 +29,47 @@ def _timed_node(name: str, node_fn):
         perf_logger.log_time(name, "node_run", elapsed)
         return result
     return wrapper
+
+
+def _parallel_opening(nodes, merge):
+    """Run a debate's opening speakers concurrently on the same state, then merge their turns."""
+    def run(state):
+        with ThreadPoolExecutor(len(nodes)) as pool:
+            results = list(pool.map(lambda node: node(state), nodes))
+        return merge(state, results)
+    return run
+
+
+def _merge_invest_opening(state, results):
+    bull, bear = (r["investment_debate_state"] for r in results)
+    base = state["investment_debate_state"]
+    return {"investment_debate_state": {
+        "history": bull["history"] + "\n" + bear["current_response"],
+        "bull_history": bull["bull_history"],
+        "bear_history": bear["bear_history"],
+        # Ends on Bear so any further round resumes with Bull, as in the sequential order.
+        "current_response": bear["current_response"],
+        "judge_decision": base.get("judge_decision", ""),
+        "count": base["count"] + 2,
+    }}
+
+
+def _merge_risk_opening(state, results):
+    agg, con, neu = (r["risk_debate_state"] for r in results)
+    base = state["risk_debate_state"]
+    return {"risk_debate_state": {
+        "history": agg["history"] + "\n" + con["current_conservative_response"]
+        + "\n" + neu["current_neutral_response"],
+        "aggressive_history": agg["aggressive_history"],
+        "conservative_history": con["conservative_history"],
+        "neutral_history": neu["neutral_history"],
+        "latest_speaker": "Neutral",
+        "current_aggressive_response": agg["current_aggressive_response"],
+        "current_conservative_response": con["current_conservative_response"],
+        "current_neutral_response": neu["current_neutral_response"],
+        "judge_decision": base.get("judge_decision", ""),
+        "count": base["count"] + 3,
+    }}
 
 
 MAX_TOOL_ROUNDS = 8
@@ -170,7 +212,13 @@ class GraphSetup:
         workflow.add_node("Trader", trader_node)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
+        # Opening rounds run concurrently; any further rounds alternate speakers as before.
+        workflow.add_node("Research Debate Opening", _parallel_opening(
+            [bull_researcher_node, bear_researcher_node], _merge_invest_opening))
+
         if not skip_risk_debate:
+            workflow.add_node("Risk Debate Opening", _parallel_opening(
+                [aggressive_analyst, conservative_analyst, neutral_analyst], _merge_risk_opening))
             workflow.add_node("Aggressive Analyst", aggressive_analyst)
             workflow.add_node("Neutral Analyst", neutral_analyst)
             workflow.add_node("Conservative Analyst", conservative_analyst)
@@ -185,8 +233,15 @@ class GraphSetup:
             [f"{a.capitalize()} Analyst" for a in selected_analysts], "Msg Clear Analysts"
         )
 
-        # Single merge point: clear messages → Bull Researcher
-        workflow.add_edge("Msg Clear Analysts", "Bull Researcher")
+        workflow.add_edge("Msg Clear Analysts", "Research Debate Opening")
+        workflow.add_conditional_edges(
+            "Research Debate Opening",
+            self.conditional_logic.should_continue_debate,
+            {
+                "Bull Researcher": "Bull Researcher",
+                "Research Manager": "Research Manager",
+            },
+        )
 
         # Investment debate edges
         workflow.add_conditional_edges(
@@ -211,8 +266,15 @@ class GraphSetup:
             # Skip risk debate: Trader → Portfolio Manager directly
             workflow.add_edge("Trader", "Portfolio Manager")
         else:
-            # Full risk debate: Trader → Aggressive → Conservative → Neutral → PM
-            workflow.add_edge("Trader", "Aggressive Analyst")
+            workflow.add_edge("Trader", "Risk Debate Opening")
+            workflow.add_conditional_edges(
+                "Risk Debate Opening",
+                self.conditional_logic.should_continue_risk_analysis,
+                {
+                    "Aggressive Analyst": "Aggressive Analyst",
+                    "Portfolio Manager": "Portfolio Manager",
+                },
+            )
             workflow.add_conditional_edges(
                 "Aggressive Analyst",
                 self.conditional_logic.should_continue_risk_analysis,
