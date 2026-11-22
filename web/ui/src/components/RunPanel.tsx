@@ -19,7 +19,7 @@ import {
 } from "./shared";
 
 // Rough per-stock wall time; the agents make ~15–25 sequential LLM calls.
-const MINUTES_PER_STOCK = { full: 6, quick: 4 };
+const MINUTES_PER_STOCK = { full: 4, quick: 3 };
 
 interface ModelChoice {
   provider: string;
